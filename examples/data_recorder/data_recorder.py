@@ -7,6 +7,12 @@
 # 加载Python标准库
 from logging import INFO
 from time import sleep
+from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+# 加载项目根目录的 .env 文件
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 # 加载VeighNa核心框架
 from vnpy.event import EventEngine, Event
@@ -31,9 +37,19 @@ SETTINGS["log.console"] = True      # 在控制台显示日志，方便实时查
 
 # CTP接口登录信息
 # 以下使用的是SimNow模拟账户信息，初学者可以在SimNow官网申请
+# ctp_setting: dict[str, str] = {
+#     "用户名": "888888",                       # SimNow账户名
+#     "密码": "123456",                         # SimNow密码
+#     "经纪商代码": "9999",                     # SimNow经纪商代码固定为9999
+#     "交易服务器": "180.168.146.187:10201",    # SimNow交易服务器地址和端口
+#     "行情服务器": "180.168.146.187:10211",    # SimNow行情服务器地址和端口
+#     "产品名称": "simnow_client_test",         # 产品名称，用于区分不同的客户端
+#     "授权编码": "0000000000000000"            # 授权编码，SimNow模拟账户使用默认值即可
+# }
+
 ctp_setting: dict[str, str] = {
-    "用户名": "888888",                       # SimNow账户名
-    "密码": "123456",                         # SimNow密码
+    "用户名": os.getenv("CTP_USER", ""),
+    "密码": os.getenv("CTP_PASSWORD", ""),
     "经纪商代码": "9999",                     # SimNow经纪商代码固定为9999
     "交易服务器": "180.168.146.187:10201",    # SimNow交易服务器地址和端口
     "行情服务器": "180.168.146.187:10211",    # SimNow行情服务器地址和端口

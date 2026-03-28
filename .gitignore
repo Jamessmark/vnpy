@@ -29,6 +29,7 @@ dist
 *.ipdb
 *.pdb
 
+
 # Documents
 _build
 _static
@@ -40,3 +41,9 @@ _templates
 
 # Alpha
 lab/
+
+# uv
+*.lock
+
+# 环境变量配置（含账号密码，禁止提交）
+.env
