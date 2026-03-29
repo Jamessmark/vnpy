@@ -1,0 +1,22 @@
+{
+  "rss_feeds": {
+    "world":       { "name": "BBC World",    "env": "RSS_BBC_WORLD",    "default": "https://feeds.bbci.co.uk/news/world/rss.xml" },
+    "top":         { "name": "BBC Top",      "env": "RSS_BBC_TOP",      "default": "https://feeds.bbci.co.uk/news/rss.xml" },
+    "business":    { "name": "BBC Business", "env": "RSS_BBC_BUSINESS", "default": "https://feeds.bbci.co.uk/news/business/rss.xml" },
+    "tech":        { "name": "BBC Tech",     "env": "RSS_BBC_TECH",     "default": "https://feeds.bbci.co.uk/news/technology/rss.xml" },
+    "reuters":     { "name": "Reuters",      "env": "RSS_REUTERS",      "default": "https://www.reutersagency.com/feed/?best-regions=world&post_type=best" },
+    "npr":         { "name": "NPR",          "env": "RSS_NPR",          "default": "https://feeds.npr.org/1001/rss.xml" },
+    "aljazeera":   { "name": "Al Jazeera",   "env": "RSS_ALJAZEERA",    "default": "https://www.aljazeera.com/xml/rss/all.xml" },
+    "cls_flash":   { "name": "财联社快讯",    "env": "RSS_CLS_FLASH",    "default": "https://www.cls.cn/rss/telegraph" },
+    "cls_article": { "name": "财联社文章",    "env": "RSS_CLS_ARTICLE",  "default": "https://www.cls.cn/rss/article" }
+  },
+  "topic_keywords": {
+    "oil":   ["oil", "crude", "OPEC", "energy", "petroleum", "barrel", "原油", "能源"],
+    "gold":  ["gold", "inflation", "Fed", "dollar", "safe haven", "黄金", "通胀"],
+    "china": ["China", "Beijing", "yuan", "renminbi", "PRC", "中国", "人民币"],
+    "fed":   ["Fed", "Federal Reserve", "interest rate", "Powell", "美联储", "加息", "降息"],
+    "steel": ["螺纹钢", "热卷", "钢材", "钢铁", "iron ore", "rebar"],
+    "soy":   ["豆粕", "豆油", "大豆", "soybean", "soy meal", "USDA"],
+    "coal":  ["焦煤", "焦炭", "动力煤", "coking coal", "coke"]
+  }
+}
