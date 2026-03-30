@@ -17,7 +17,7 @@ load_dotenv(Path(__file__).parent.parent.parent / ".env")
 # 加载VeighNa核心框架
 from vnpy.event import EventEngine, Event
 from vnpy.trader.setting import SETTINGS
-from vnpy.trader.engine import MainEngine, LogEngine
+from vnpy.trader.engine import MainEngine
 from vnpy.trader.object import ContractData
 from vnpy.trader.constant import Exchange, Product
 from vnpy.trader.event import EVENT_CONTRACT
@@ -26,6 +26,9 @@ from vnpy.trader.event import EVENT_CONTRACT
 from vnpy_ctp import CtpGateway
 from vnpy_datarecorder import DataRecorderApp, RecorderEngine
 from vnpy_datarecorder.engine import EVENT_RECORDER_LOG
+
+# log
+from vnpy.trader.logger import logger as vt_logger
 
 
 # 开启日志记录功能
@@ -51,8 +54,8 @@ ctp_setting: dict[str, str] = {
     "用户名": os.getenv("CTP_USER", ""),
     "密码": os.getenv("CTP_PASSWORD", ""),
     "经纪商代码": "9999",                     # SimNow经纪商代码固定为9999
-    "交易服务器": "180.168.146.187:10201",    # SimNow交易服务器地址和端口
-    "行情服务器": "180.168.146.187:10211",    # SimNow行情服务器地址和端口
+    "交易服务器": "182.254.243.31:30001",    # SimNow交易服务器地址和端口
+    "行情服务器": "182.254.243.31:30011",    # SimNow行情服务器地址和端口
     "产品名称": "simnow_client_test",         # 产品名称，用于区分不同的客户端
     "授权编码": "0000000000000000"            # 授权编码，SimNow模拟账户使用默认值即可
 }
@@ -61,8 +64,8 @@ ctp_setting: dict[str, str] = {
 # 要录制数据的交易所列表
 # 可以根据需要取消注释来添加更多交易所
 recording_exchanges: list[Exchange] = [
-    Exchange.CFFEX,          # 中国金融期货交易所
-    # Exchange.SHFE,         # 上海期货交易所
+    # Exchange.CFFEX,          # 中国金融期货交易所
+    Exchange.SHFE,         # 上海期货交易所
     # Exchange.DCE,          # 大连商品交易所
     # Exchange.CZCE,         # 郑州商品交易所
     # Exchange.GFEX,         # 广州期货交易所
@@ -126,9 +129,6 @@ def run_recorder() -> None:
     # 注册合约事件处理函数，当有新合约信息推送时，会自动调用subscribe_data函数
     event_engine.register(EVENT_CONTRACT, subscribe_data)
 
-    # 获取日志引擎并设置日志处理
-    log_engine: LogEngine = main_engine.get_engine("log")
-
     def print_log(event: Event) -> None:
         """
         处理数据录制模块的日志事件
@@ -139,7 +139,8 @@ def run_recorder() -> None:
         参数:
             event: 包含日志信息的事件对象
         """
-        log_engine.logger.log(INFO, event.data)
+        
+        vt_logger.log(INFO, event.data)
 
     # 注册日志事件处理函数，当有新的日志推送时，会自动调用print_log函数
     event_engine.register(EVENT_RECORDER_LOG, print_log)
