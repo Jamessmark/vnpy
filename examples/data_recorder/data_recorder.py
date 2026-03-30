@@ -64,12 +64,12 @@ ctp_setting: dict[str, str] = {
 # 要录制数据的交易所列表
 # 可以根据需要取消注释来添加更多交易所
 recording_exchanges: list[Exchange] = [
-    # Exchange.CFFEX,          # 中国金融期货交易所
+    Exchange.CFFEX,          # 中国金融期货交易所
     Exchange.SHFE,         # 上海期货交易所
-    # Exchange.DCE,          # 大连商品交易所
-    # Exchange.CZCE,         # 郑州商品交易所
-    # Exchange.GFEX,         # 广州期货交易所
-    # Exchange.INE,          # 上海国际能源交易中心
+    Exchange.DCE,          # 大连商品交易所
+    Exchange.CZCE,         # 郑州商品交易所
+    Exchange.GFEX,         # 广州期货交易所
+    Exchange.INE,          # 上海国际能源交易中心
 ]
 
 
@@ -123,7 +123,7 @@ def run_recorder() -> None:
             and contract.product in recording_products  # 检查合约品种类型是否在预设列表中
         ):
             # 添加该合约的行情录制任务，vt_symbol是VeighNa中的唯一标识符，格式为"代码.交易所"
-            recorder_engine.add_tick_recording(contract.vt_symbol)      # 录制Tick数据
+            # recorder_engine.add_tick_recording(contract.vt_symbol)      # 录制Tick数据
             recorder_engine.add_bar_recording(contract.vt_symbol)       # 录制分钟K线
 
     # 注册合约事件处理函数，当有新合约信息推送时，会自动调用subscribe_data函数
