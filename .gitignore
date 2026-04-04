@@ -54,3 +54,7 @@ lab/
 *.pid
 
 
+# data & config
+**/data/
+**/config/
+

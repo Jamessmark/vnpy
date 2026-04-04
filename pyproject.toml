@@ -41,6 +41,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "duckduckgo-search>=8.1.1",
     "ddgs>=9.12.0",
+    "dash>=4.1.0",
 ]
 keywords = ["quant", "quantitative", "investment", "trading", "algotrading"]
 

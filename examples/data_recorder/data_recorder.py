@@ -10,6 +10,8 @@ from time import sleep
 from pathlib import Path
 from dotenv import load_dotenv
 import os
+import re
+import signal
 
 # 加载项目根目录的 .env 文件
 load_dotenv(Path(__file__).parent.parent.parent / ".env")
@@ -81,6 +83,30 @@ recording_products: list[Product] = [
 ]
 
 
+def czce_symbol_to_4digit(symbol: str) -> str:
+    """
+    将郑商所合约代码从3位数字格式转换为4位年份格式
+
+    CTP推送的郑商所合约代码是3位数字（年份末位+月份2位），
+    统一转换为4位格式与数据库存储格式保持一致。
+
+    例：
+      MA604  →  MA2604  （甲醇 2026年04月）
+      CF605  →  CF2605  （棉花 2026年05月）
+      AP001  →  AP2001  （苹果 2020年01月，极少出现）
+
+    非CZCE合约不调用此函数，其他交易所合约代码格式不变。
+    """
+    m = re.match(r'^([A-Za-z]+)(\d{3})$', symbol)
+    if not m:
+        return symbol  # 已是4位或其他格式，原样返回
+    prefix = m.group(1).upper()
+    digits = m.group(2)
+    # digits[0] = 年份末位，digits[1:] = 月份2位
+    # 统一映射到 20XX（2020年代）
+    return f"{prefix}2{digits}"
+
+
 def run_recorder() -> None:
     """
     运行行情录制程序
@@ -111,6 +137,9 @@ def run_recorder() -> None:
         当系统接收到合约信息后，根据预设的交易所和品种过滤条件，
         自动为符合条件的合约添加行情录制任务。
 
+        注意：郑商所(CZCE)合约代码由CTP推送为3位数字格式（如 MA604），
+        统一转换为4位年份格式（如 MA2604）后再录制，与数据库存储格式一致。
+
         参数:
             event: 包含合约信息的事件对象
         """
@@ -122,9 +151,16 @@ def run_recorder() -> None:
             contract.exchange in recording_exchanges    # 检查合约所属交易所是否在预设列表中
             and contract.product in recording_products  # 检查合约品种类型是否在预设列表中
         ):
+            # CZCE合约代码统一转换为4位年份格式
+            if contract.exchange == Exchange.CZCE:
+                symbol_4digit = czce_symbol_to_4digit(contract.symbol)
+                vt_symbol = f"{symbol_4digit}.{contract.exchange.value}"
+            else:
+                vt_symbol = contract.vt_symbol
+
             # 添加该合约的行情录制任务，vt_symbol是VeighNa中的唯一标识符，格式为"代码.交易所"
-            # recorder_engine.add_tick_recording(contract.vt_symbol)      # 录制Tick数据
-            recorder_engine.add_bar_recording(contract.vt_symbol)       # 录制分钟K线
+            # recorder_engine.add_tick_recording(vt_symbol)      # 录制Tick数据
+            recorder_engine.add_bar_recording(vt_symbol)       # 录制分钟K线
 
     # 注册合约事件处理函数，当有新合约信息推送时，会自动调用subscribe_data函数
     event_engine.register(EVENT_CONTRACT, subscribe_data)
@@ -151,8 +187,22 @@ def run_recorder() -> None:
     # 等待30秒，CTP接口连接后需要一段时间来完成初始化
     sleep(30)
 
-    # 提示用户程序已经开始运行，用户可以根据需要随时退出
-    input(">>>>>> 高频行情数据录制已启动，正在记录数据。按回车键退出程序 <<<<<<")
+    # 等待退出信号
+    # 注意：不能使用 input()，后台运行时进程无法读取终端输入（tty），
+    # 会收到 SIGTTIN 信号被强制挂起（suspended tty input）。
+    # 改为监听 SIGINT（Ctrl+C）和 SIGTERM（kill <pid>）信号，支持前台和后台两种运行方式。
+    import threading
+    stop_event = threading.Event()
+
+    def handle_stop(signum, frame):
+        vt_logger.log(INFO, f"收到退出信号，正在安全退出...")
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, handle_stop)    # 响应 Ctrl+C（前台运行）
+    signal.signal(signal.SIGTERM, handle_stop)   # 响应 kill <pid>（后台停止）
+
+    vt_logger.log(INFO, "行情录制已启动，按 Ctrl+C 或执行 kill <pid> 可安全退出")
+    stop_event.wait()  # 阻塞主线程，等待退出信号
 
     # 关闭主引擎实现安全退出，避免出现内存中未入库数据的丢失
     main_engine.close()
