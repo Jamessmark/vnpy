@@ -127,4 +127,7 @@ class Alpha158(AlphaDataset):
             self.add_feature(f"vsumd_{w}", f"(ts_sum(ts_greater(volume - ts_delay(volume, 1), 0), {w}) - ts_sum(ts_greater(ts_delay(volume, 1) - volume, 0), {w})) / (ts_sum(ts_abs(volume - ts_delay(volume, 1)), {w}) + 1e-12)")
 
         # Set label
-        self.set_label("ts_delay(close, -3) / ts_delay(close, -1) - 1")
+        # self.set_label("ts_delay(close, -3) / ts_delay(close, -1) - 1")
+        # self.set_label("ts_delay(close, -2) / ts_delay(close, -1) - 1")  # T+2/T+1，IC较低
+        # T 日因子预测 T+1 日收益（标准做法，IC最高，实盘T+1开盘执行滑点可接受）
+        self.set_label("ts_delay(close, -1) / close - 1")
