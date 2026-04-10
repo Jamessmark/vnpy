@@ -97,7 +97,7 @@ WATCH_SYMBOLS = [
 ]
 
 # 历史数据天数（取最近 N 个交易日）
-BAR_LOOKBACK_DAYS = 20
+BAR_LOOKBACK_DAYS = 10   # 原 20，减少约 50% Token 消耗
 
 # ── 报告输出目录 ───────────────────────────────────────────────────
 REPORTS_DIR = Path(__file__).parent / "reports"

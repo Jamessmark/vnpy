@@ -127,13 +127,14 @@ def _send_and_wait(session_id: str, prompt: str, timeout: int = 180) -> str:
         else:
             print(f"\n  ⚠️  复盘超时（{timeout}s）", flush=True)
 
-        # 拉取回复
+        # 拉取回复（倒序取最新20条，肯定包含最终 text 回复）
         search_opts = json.dumps({
-            "options": {"limit": 100, "order": "asc"},
+            "options": {"limit": 20, "order": "desc"},
             "textLimits": {"perMessage": 5000, "total": 20000},
         })
         msg_resp  = _run_script("messages-search.sh", session_id, search_opts)
         all_msgs  = msg_resp.get("data", {}).get("messages", [])
+        all_msgs.reverse()  # desc 取到的是逆序，还原为时间正序
         recent    = [m for m in all_msgs if m.get("ts", 0) >= send_ts]
         text_msgs = [
             m for m in recent
@@ -143,6 +144,26 @@ def _send_and_wait(session_id: str, prompt: str, timeout: int = 180) -> str:
 
     finally:
         Path(task_file).unlink(missing_ok=True)
+
+
+def _format_latest_kline(market_data: list[dict]) -> str:
+    """
+    复盘专用：只输出每个品种最新 1 根 K 线（日期 + 收盘 + 涨跌%），
+    每品种 1 行，大幅减少 Prompt token 消耗。
+    """
+    lines = []
+    for item in market_data:
+        name   = item.get("name", "")
+        symbol = item.get("symbol", "").split(".")[0]   # 去掉 .LOCAL 后缀
+        bars   = item.get("bars", [])
+        if not bars:
+            continue
+        b    = bars[-1]
+        date = b.get("date", "")
+        cls  = b.get("close", "N/A")
+        chg  = b.get("chg_pct", 0)
+        lines.append(f"{name}({symbol}): {date} cls={cls} chg={chg:+.2f}%")
+    return "\n".join(lines)
 
 
 def find_yesterday_report(today: datetime) -> tuple[Path | None, str]:
@@ -181,9 +202,8 @@ def run_review(
     yesterday_fmt = f"{yesterday_str[:4]}-{yesterday_str[4:6]}-{yesterday_str[6:]}"
     print(f"  [复盘] 对比昨日报告：{report_path.name} → 今日 {today_str}", flush=True)
 
-    # ── 格式化今日 K 线 ───────────────────────────────────────────
-    from report_generator import _format_kline_section
-    kline_section, _ = _format_kline_section(market_data)
+    # ── 格式化今日 K 线（复盘只需最新 1 根 K 线，大幅压缩 Prompt）────
+    kline_section = _format_latest_kline(market_data)
 
     # ── 构建 Prompt（昨日报告截取前 6000 字，避免过长）────────────
     prompt = REVIEW_PROMPT_TEMPLATE.format(

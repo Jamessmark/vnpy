@@ -100,18 +100,19 @@ def _format_kline_section(market_data: list[dict]) -> tuple[str, int]:
             lines.append(f"### {name}（{symbol}）\n*无数据*\n")
             continue
 
-        lines.append(f"### {name}（{symbol}）")
-        lines.append(f"- 最新收盘：{stats.get('latest_close', 'N/A')}（{stats.get('latest_date', '')}）")
-        lines.append(f"- 区间高/低：{stats.get('period_high', 'N/A')} / {stats.get('period_low', 'N/A')}")
-        lines.append(f"- 近{len(bars)}日涨跌：{stats.get('total_chg_pct', 0):+.2f}%（{stats.get('trend', '')}）")
-        lines.append(f"- 日均成交量：{stats.get('avg_volume', 0):,}")
-
         oi_chg = stats.get("oi_chg", 0)
-        oi_dir = "增仓" if oi_chg > 0 else "减仓" if oi_chg < 0 else "持平"
-        lines.append(f"- 持仓量变化：{oi_chg:+,}（{oi_dir}，最新持仓 {stats.get('latest_oi', 0):,}）")
+        oi_dir = "+" if oi_chg > 0 else "-" if oi_chg < 0 else "="
+        trend  = stats.get("trend", "")
+        lines.append(f"### {name}（{symbol}）")
+        # 压缩统计行为一行，减少 Token 消耗
+        lines.append(
+            f"cls={stats.get('latest_close','N/A')} H={stats.get('period_high','N/A')} "
+            f"L={stats.get('period_low','N/A')} chg={stats.get('total_chg_pct',0):+.2f}%({trend}) "
+            f"vol={stats.get('avg_volume',0):,} oi={stats.get('latest_oi',0):,}({oi_dir}{abs(oi_chg):,})"
+        )
 
         if switches:
-            lines.append(f"- 近期换月：{' | '.join(switches)}")
+            lines.append(f"sw: {' | '.join(switches)}")
 
         lines.append("")
         lines.append("| 日期 | 开 | 高 | 低 | 收 | 涨跌% | 成交量 | 持仓量 |")
@@ -221,12 +222,14 @@ def _send_task_and_wait(session_id: str, prompt: str, timeout: int = 600) -> str
             print(f"\n  ⚠️  等待超时（{timeout}s）", flush=True)
 
         # 拉取全部消息，Python 手动过滤本次回复
+        # 倒序取最新 20 条，避免 asc+limit=100 在消息过多时错过最终 text
         search_options = json.dumps({
-            "options": {"limit": 100, "order": "asc"},
+            "options": {"limit": 20, "order": "desc"},
             "textLimits": {"perMessage": 30000, "total": 150000},
         })
         msg_resp     = _run_script("messages-search.sh", session_id, search_options)
         all_messages = msg_resp.get("data", {}).get("messages", [])
+        all_messages.reverse()  # desc 取到的是逆序，还原为时间正序
 
         # 只保留本次发送之后的消息，取 say=text + partial=False 的最后一条
         recent    = [m for m in all_messages if m.get("ts", 0) >= send_ts]
@@ -235,7 +238,7 @@ def _send_task_and_wait(session_id: str, prompt: str, timeout: int = 600) -> str
             if m.get("say") == "text" and not m.get("partial", False) and m.get("text", "").strip()
         ]
 
-        print(f"  [Agent] 共 {len(all_messages)} 条消息，本次之后 {len(recent)} 条，有效 text {len(text_msgs)} 条", flush=True)
+        print(f"  [Agent] 最新 {len(all_messages)} 条消息，本次之后 {len(recent)} 条，有效 text {len(text_msgs)} 条", flush=True)
 
         if text_msgs:
             return text_msgs[-1].get("text", "")
@@ -302,7 +305,7 @@ def generate_report(
     )
 
     session_id = _get_or_create_session("期货执行计划Agent")
-    report     = _send_task_and_wait(session_id, prompt, timeout=600)
+    report     = _send_task_and_wait(session_id, prompt, timeout=900)
 
     if not report:
         print("  ⚠️  Agent 无响应，输出原始数据摘要", flush=True)
