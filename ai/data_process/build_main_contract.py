@@ -118,10 +118,16 @@ class MappingStore:
                 exchange       TEXT NOT NULL,
                 trade_date     TEXT NOT NULL,
                 dominant       TEXT NOT NULL,
+                sub_dominant   TEXT,
                 open_interest  REAL NOT NULL DEFAULT 0.0,
                 PRIMARY KEY (product, exchange, trade_date)
             )
         """)
+        # 尝试添加 sub_dominant 列（兼容旧表）
+        try:
+            self._conn.execute("ALTER TABLE main_contract_mapping ADD COLUMN sub_dominant TEXT")
+        except sqlite3.OperationalError:
+            pass  # 列已存在
         self._conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_product_exchange
             ON main_contract_mapping (product, exchange)
@@ -140,7 +146,7 @@ class MappingStore:
         """
         写入映射表（增量 INSERT OR IGNORE，或 replace=True 时全量覆盖）。
 
-        mapping 格式：list of {"trade_date": date, "dominant": str, "open_interest": float}
+        mapping 格式：list of {"trade_date": date, "dominant": str, "sub_dominant": str, "open_interest": float}
         返回：实际插入/更新的行数
         """
         if not mapping:
@@ -154,13 +160,20 @@ class MappingStore:
             )
 
         verb = "INSERT OR REPLACE" if replace else "INSERT OR IGNORE"
-        rows = [
-            (product, exchange, row["trade_date"].isoformat(), row["dominant"], row["open_interest"])
-            for row in mapping
-        ]
+        rows = []
+        for row in mapping:
+            sub_dom = row.get("sub_dominant", row.get("dominant", ""))
+            rows.append((
+                product,
+                exchange,
+                row["trade_date"].isoformat(),
+                row["dominant"],
+                sub_dom,
+                row.get("open_interest", 0.0),
+            ))
         self._conn.executemany(
             f"{verb} INTO main_contract_mapping "
-            f"(product, exchange, trade_date, dominant, open_interest) VALUES (?,?,?,?,?)",
+            f"(product, exchange, trade_date, dominant, sub_dominant, open_interest) VALUES (?,?,?,?,?,?)",
             rows,
         )
         self._conn.commit()
@@ -171,7 +184,7 @@ class MappingStore:
     def get_all(self, product: str, exchange: str) -> list[dict]:
         """返回某品种全部映射记录，按 trade_date 升序"""
         cur = self._conn.execute(
-            "SELECT trade_date, dominant, open_interest FROM main_contract_mapping "
+            "SELECT trade_date, dominant, sub_dominant, open_interest FROM main_contract_mapping "
             "WHERE product=? AND exchange=? ORDER BY trade_date",
             (product, exchange),
         )
@@ -179,7 +192,8 @@ class MappingStore:
             {
                 "trade_date": date.fromisoformat(row[0]),
                 "dominant": row[1],
-                "open_interest": row[2],
+                "sub_dominant": row[2] if len(row) > 2 else row[1],
+                "open_interest": row[3] if len(row) > 3 else 0.0,
             }
             for row in cur.fetchall()
         ]
@@ -246,14 +260,21 @@ def build_dominant_mapping(
     smoothing_days: int = 5,
 ) -> list[dict]:
     """
-    按交易日选出当天持仓量最大的合约作为主力。
+    按交易日选出当天持仓量最大的合约作为主力，第二大的作为次主力。
 
-    smoothing_days：新主力需连续领先 smoothing_days 天才切换，避免频繁换月。
-    默认值 5 与期货通换月策略对齐（实测 MA 2025-12-16 换月吻合）。
+    【主力判定】：
+    使用平滑机制（smoothing_days），新主力必须连续 N 天持仓量第一，才会真正发生切换。
+    这样可以避免在换月交接期，两个合约持仓量交替领先导致主力频繁闪跳。
+
+    【次主力判定】：
+    使用相同的平滑机制，新次主力必须连续 N 天排在次席（或超越当前次主力），才会真正发生切换。
+    特殊保护：如果真实的次主力其实是当前的平滑主力（发生在新老交替期），则暂不切换。
+    强制保护：输出的主力和次主力绝对不能是同一个合约（除非该品种当天只有1个合约有数据）。
 
     返回：list of {
         "trade_date": date,
-        "dominant": str,    # 主力合约代码
+        "dominant": str,      # 主力合约代码
+        "sub_dominant": str,  # 次主力合约代码
         "open_interest": float,
     }
     """
@@ -300,33 +321,77 @@ def build_dominant_mapping(
 
     # 平滑换月：当前主力和候选队列
     current_dominant = max(daily_oi[trade_dates[0]], key=daily_oi[trade_dates[0]].get)
-    pending_new: str | None = None
-    pending_count: int = 0
+    
+    # 初始次主力：排除主力后持仓量最大的
+    candidates = [sym for sym, oi in daily_oi[trade_dates[0]].items() if sym != current_dominant]
+    current_sub = max(candidates, key=lambda s: daily_oi[trade_dates[0]][s]) if candidates else current_dominant
+    
+    # 平滑计数器
+    pending_dom: str | None = None
+    pending_dom_count: int = 0
+    
+    pending_sub: str | None = None
+    pending_sub_count: int = 0
 
     mapping: list[dict] = []
 
     for td in trade_dates:
         oi_today = daily_oi[td]
 
-        # 按 open_interest 降序找出最大持仓合约
-        best = max(oi_today, key=oi_today.get)
+        # 按 open_interest 降序排序
+        sorted_syms = sorted(oi_today.keys(), key=lambda s: oi_today[s], reverse=True)
 
-        if best == current_dominant:
-            pending_new = None
-            pending_count = 0
-        elif best == pending_new:
-            pending_count += 1
-            if pending_count >= smoothing_days:
-                current_dominant = best
-                pending_new = None
-                pending_count = 0
+        # 找出今日实际的主力（OI最大）和次主力（OI第二）
+        real_dom = sorted_syms[0] if sorted_syms else current_dominant
+        real_sub = sorted_syms[1] if len(sorted_syms) > 1 else current_dominant
+
+        # --- 1. 处理主力平滑切换 ---
+        if real_dom == current_dominant:
+            pending_dom = None
+            pending_dom_count = 0
+        elif real_dom == pending_dom:
+            pending_dom_count += 1
+            if pending_dom_count >= smoothing_days:
+                current_dominant = real_dom
+                pending_dom = None
+                pending_dom_count = 0
         else:
-            pending_new = best
-            pending_count = 1
+            pending_dom = real_dom
+            pending_dom_count = 1
+
+        # --- 2. 处理次主力平滑切换 ---
+        # 注意：如果次主力变成了主力，我们需要立即切换次主力，不能等平滑（否则主力次主力会变成同一个）
+        if real_sub == current_dominant:
+            # 这种情况通常发生在换月交接期，旧主力变成了现在的次主力
+            pass
+
+        if real_sub == current_sub:
+            pending_sub = None
+            pending_sub_count = 0
+        elif real_sub == current_dominant:
+            # 如果真实次主力其实是当前的平滑主力，这说明不要切
+            pending_sub = None
+            pending_sub_count = 0
+        elif real_sub == pending_sub:
+            pending_sub_count += 1
+            if pending_sub_count >= smoothing_days:
+                current_sub = real_sub
+                pending_sub = None
+                pending_sub_count = 0
+        else:
+            pending_sub = real_sub
+            pending_sub_count = 1
+            
+        # 强制保护：主力次主力不能是同一个合约（除非该品种今天只有1个合约有数据）
+        final_sub = current_sub
+        if final_sub == current_dominant and len(sorted_syms) > 1:
+            # 降级取真实次主力
+            final_sub = real_sub
 
         mapping.append({
             "trade_date": td,
             "dominant": current_dominant,
+            "sub_dominant": final_sub,
             "open_interest": oi_today.get(current_dominant, 0.0),
         })
 
@@ -337,6 +402,53 @@ def build_dominant_mapping(
 # 第二步：用映射表拼接主连日线
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _weighted_bar(
+    main_symbol: str,
+    main_exchange: Exchange,
+    interval: Interval,
+    dt: datetime,
+    bars: list[BarData],
+) -> BarData | None:
+    """
+    将多根同一时间戳的 BarData 合成为一根加权虚拟 K 线：
+      - open/high/low/close：按 volume 加权均价
+      - volume / turnover / open_interest：各合约直接求和
+    若 bars 为空返回 None；若只有一根则直接使用其价格（避免除零）。
+    """
+    if not bars:
+        return None
+
+    total_volume = sum(b.volume for b in bars)
+
+    if total_volume > 0:
+        w_open  = sum(b.open_price  * b.volume for b in bars) / total_volume
+        w_high  = sum(b.high_price  * b.volume for b in bars) / total_volume
+        w_low   = sum(b.low_price   * b.volume for b in bars) / total_volume
+        w_close = sum(b.close_price * b.volume for b in bars) / total_volume
+    else:
+        # 全部成交量为 0（罕见），退化为简单均价
+        n = len(bars)
+        w_open  = sum(b.open_price  for b in bars) / n
+        w_high  = sum(b.high_price  for b in bars) / n
+        w_low   = sum(b.low_price   for b in bars) / n
+        w_close = sum(b.close_price for b in bars) / n
+
+    return BarData(
+        symbol=main_symbol,
+        exchange=main_exchange,
+        interval=interval,
+        datetime=dt,
+        open_price=w_open,
+        high_price=w_high,
+        low_price=w_low,
+        close_price=w_close,
+        volume=total_volume,
+        turnover=sum(b.turnover for b in bars),
+        open_interest=sum(b.open_interest for b in bars),
+        gateway_name="DB",
+    )
+
+
 def build_main_daily_bars(
     prefix: str,
     exchange: Exchange,
@@ -344,49 +456,61 @@ def build_main_daily_bars(
     db,
 ) -> list[BarData]:
     """
-    按主力映射表逐日拼接日K线，生成不复权主连日线序列。
+    按主力映射表逐日合成主连日线序列。
+
+    每个交易日取【主力 + 次主力】两个合约的日K线，
+    按成交量加权合成价格，成交量/成交额/持仓量直接求和。
     主连 symbol = <prefix>888，exchange = LOCAL
     """
     if not mapping:
         return []
 
-    dom_dates: dict[str, list[date]] = defaultdict(list)
-    for row in mapping:
-        dom_dates[row["dominant"]].append(row["trade_date"])
+    # 确定日期范围
+    all_dates = [row["trade_date"] for row in mapping]
+    start_dt = datetime.combine(min(all_dates), time(0, 0))
+    end_dt   = datetime.combine(max(all_dates), time(23, 59, 59))
 
+    # 加载该品种所有合约的日K线（排除 LOCAL 主连本身）
+    overviews = db.get_bar_overview()
+    contracts = [
+        o.symbol for o in overviews
+        if o.interval == Interval.DAILY
+        and o.exchange == exchange
+        and symbol_prefix(o.symbol) == prefix
+    ]
+
+    # symbol -> {trade_date: BarData}
     bar_lookup: dict[str, dict[date, BarData]] = {}
-    for sym, dates in dom_dates.items():
-        start_dt = datetime.combine(min(dates), time(0, 0))
-        end_dt = datetime.combine(max(dates), time(23, 59, 59))
+    for sym in contracts:
         bars = db.load_bar_data(sym, exchange, Interval.DAILY, start_dt, end_dt)
-        bar_lookup[sym] = {b.datetime.date(): b for b in bars}
+        if bars:
+            bar_lookup[sym] = {b.datetime.date(): b for b in bars}
 
     main_bars: list[BarData] = []
     main_exchange = Exchange.LOCAL
     main_symbol = main_contract_symbol(prefix)
 
     for row in mapping:
-        td = row["trade_date"]
-        sym = row["dominant"]
-        src_bar = bar_lookup.get(sym, {}).get(td)
-        if src_bar is None:
+        td  = row["trade_date"]
+        dom = row["dominant"]
+        sub = row.get("sub_dominant", dom)  # 兼容旧数据
+
+        # 收集主力+次主力合约的bar
+        day_bars: list[BarData] = []
+        if dom in bar_lookup and td in bar_lookup[dom]:
+            day_bars.append(bar_lookup[dom][td])
+        if sub in bar_lookup and td in bar_lookup[sub]:
+            day_bars.append(bar_lookup[sub][td])
+
+        if not day_bars:
             continue
 
-        main_bar = BarData(
-            symbol=main_symbol,
-            exchange=main_exchange,
-            interval=Interval.DAILY,
-            datetime=src_bar.datetime,
-            open_price=src_bar.open_price,
-            high_price=src_bar.high_price,
-            low_price=src_bar.low_price,
-            close_price=src_bar.close_price,
-            volume=src_bar.volume,
-            turnover=src_bar.turnover,
-            open_interest=src_bar.open_interest,
-            gateway_name="DB",
-        )
-        main_bars.append(main_bar)
+        # 取主力合约的 datetime 作为合成 bar 的时间戳
+        bar_dt = day_bars[0].datetime
+
+        main_bar = _weighted_bar(main_symbol, main_exchange, Interval.DAILY, bar_dt, day_bars)
+        if main_bar:
+            main_bars.append(main_bar)
 
     return main_bars
 
@@ -402,55 +526,68 @@ def build_main_minute_bars(
     db,
 ) -> list[BarData]:
     """
-    按主力映射表逐日拼接分钟K线（当日主力固定，不盘中切换）。
+    按主力映射表逐日合成主连分钟线序列。
+
+    每个交易日取【主力 + 次主力】两个合约的分钟K线，
+    对相同时间戳的多根 bar 按成交量加权合成价格，
+    成交量/成交额/持仓量直接求和。
     主连 symbol = <prefix>888，exchange = LOCAL
     """
     if not mapping:
         return []
 
-    date_to_dom: dict[date, str] = {row["trade_date"]: row["dominant"] for row in mapping}
-    dom_dates: dict[str, list[date]] = defaultdict(list)
-    for td, sym in date_to_dom.items():
-        dom_dates[sym].append(td)
+    all_dates = [row["trade_date"] for row in mapping]
+    start_dt  = datetime.combine(min(all_dates) - timedelta(days=1), time(15, 0))
+    end_dt    = datetime.combine(max(all_dates) + timedelta(days=1), time(3, 0))
 
-    minute_lookup: dict[str, dict[date, list[BarData]]] = {}
-    for sym, dates in dom_dates.items():
-        start_dt = datetime.combine(min(dates) - timedelta(days=1), time(15, 0))
-        end_dt = datetime.combine(max(dates) + timedelta(days=1), time(3, 0))
+    # 加载该品种所有合约的分钟K线（排除 LOCAL 主连本身）
+    overviews = db.get_bar_overview()
+    contracts = [
+        o.symbol for o in overviews
+        if o.interval == Interval.MINUTE
+        and o.exchange == exchange
+        and symbol_prefix(o.symbol) == prefix
+    ]
+
+    # sym -> trade_date -> {timestamp -> BarData}
+    minute_lookup: dict[str, dict[date, dict[datetime, BarData]]] = {}
+    for sym in contracts:
         bars = db.load_bar_data(sym, exchange, Interval.MINUTE, start_dt, end_dt)
         if not bars:
             continue
-        day_bars: dict[date, list[BarData]] = defaultdict(list)
+        by_day: dict[date, dict[datetime, BarData]] = defaultdict(dict)
         for b in bars:
             td = assign_trade_date(b.datetime)
-            day_bars[td].append(b)
-        minute_lookup[sym] = day_bars
+            by_day[td][b.datetime] = b
+        minute_lookup[sym] = by_day
 
     main_bars: list[BarData] = []
     main_exchange = Exchange.LOCAL
     main_symbol = main_contract_symbol(prefix)
 
     for row in sorted(mapping, key=lambda x: x["trade_date"]):
-        td = row["trade_date"]
-        sym = row["dominant"]
-        src_day_bars = minute_lookup.get(sym, {}).get(td, [])
+        td      = row["trade_date"]
+        dom_sym = row["dominant"]
+        sub_sym = row.get("sub_dominant", dom_sym)
 
-        for src_bar in src_day_bars:
-            main_bar = BarData(
-                symbol=main_symbol,
-                exchange=main_exchange,
-                interval=Interval.MINUTE,
-                datetime=src_bar.datetime,
-                open_price=src_bar.open_price,
-                high_price=src_bar.high_price,
-                low_price=src_bar.low_price,
-                close_price=src_bar.close_price,
-                volume=src_bar.volume,
-                turnover=src_bar.turnover,
-                open_interest=src_bar.open_interest,
-                gateway_name="DB",
-            )
-            main_bars.append(main_bar)
+        # 收集主力+次主力合约的 timestamp 集合（以主力合约的时间戳为基准）
+        dom_timestamps = set(
+            minute_lookup.get(dom_sym, {}).get(td, {}).keys()
+        )
+        if not dom_timestamps:
+            continue
+
+        for ts in sorted(dom_timestamps):
+            # 收集该时间戳下主力+次主力的 bar
+            ts_bars: list[BarData] = []
+            if dom_sym in minute_lookup and td in minute_lookup[dom_sym] and ts in minute_lookup[dom_sym][td]:
+                ts_bars.append(minute_lookup[dom_sym][td][ts])
+            if sub_sym in minute_lookup and td in minute_lookup[sub_sym] and ts in minute_lookup[sub_sym][td]:
+                ts_bars.append(minute_lookup[sub_sym][td][ts])
+
+            main_bar = _weighted_bar(main_symbol, main_exchange, Interval.MINUTE, ts, ts_bars)
+            if main_bar:
+                main_bars.append(main_bar)
 
     return main_bars
 
@@ -642,6 +779,7 @@ def main() -> None:
                         "exchange": exchange.value,
                         "trade_date": row["trade_date"].isoformat(),
                         "dominant": row["dominant"],
+                        "sub_dominant": row.get("sub_dominant", row["dominant"]),
                         "open_interest": row["open_interest"],
                     })
 

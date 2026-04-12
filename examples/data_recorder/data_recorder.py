@@ -85,17 +85,14 @@ recording_products: list[Product] = [
 
 def czce_symbol_to_4digit(symbol: str) -> str:
     """
-    将郑商所合约代码从3位数字格式转换为4位年份格式
+    将郑商所合约代码从3位数字格式转换为4位年份格式。
 
-    CTP推送的郑商所合约代码是3位数字（年份末位+月份2位），
-    统一转换为4位格式与数据库存储格式保持一致。
-
-    例：
-      MA604  →  MA2604  （甲醇 2026年04月）
-      CF605  →  CF2605  （棉花 2026年05月）
-      AP001  →  AP2001  （苹果 2020年01月，极少出现）
-
-    非CZCE合约不调用此函数，其他交易所合约代码格式不变。
+    注意：此函数仅供外部工具（如 build_main_contract.py）调用，
+    data_recorder.py 内部不再使用，因为 vnpy_datarecorder 的
+    add_bar_recording 会把 vt_symbol 直接传给 CTP 行情订阅，
+    而 CTP 郑商所行情源只认 3 位格式（MA703），传 4 位（MA2703）
+    会导致订阅静默失败，行情数据无法录入。
+    vnpy_datarecorder 内部会自动把 CZCE 3位格式转成 4 位再存库。
     """
     m = re.match(r'^([A-Za-z]+)(\d{3})$', symbol)
     if not m:
@@ -151,12 +148,11 @@ def run_recorder() -> None:
             contract.exchange in recording_exchanges    # 检查合约所属交易所是否在预设列表中
             and contract.product in recording_products  # 检查合约品种类型是否在预设列表中
         ):
-            # CZCE合约代码统一转换为4位年份格式
-            if contract.exchange == Exchange.CZCE:
-                symbol_4digit = czce_symbol_to_4digit(contract.symbol)
-                vt_symbol = f"{symbol_4digit}.{contract.exchange.value}"
-            else:
-                vt_symbol = contract.vt_symbol
+            # 直接使用 contract.vt_symbol（CTP 推送的原始格式）
+            # 注意：不对 CZCE 做 3→4 位转换，因为 add_bar_recording 内部
+            # 会将 vt_symbol 直接传给 CTP 订阅，CTP 只认 3 位格式（MA703）。
+            # vnpy_datarecorder 会在存库时自动将 CZCE 转为 4 位格式（MA2703）。
+            vt_symbol = contract.vt_symbol
 
             # 添加该合约的行情录制任务，vt_symbol是VeighNa中的唯一标识符，格式为"代码.交易所"
             # recorder_engine.add_tick_recording(vt_symbol)      # 录制Tick数据

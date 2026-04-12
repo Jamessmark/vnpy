@@ -12,7 +12,13 @@
 #   tail -f examples/data_recorder/log/recorder.log
 #
 # 停止录制：
-#   PID=$(cat examples/data_recorder/log/recorder.pid) && kill $PID
+: <<'STOP_COMMANDS'
+
+PID=$(cat examples/data_recorder/log/recorder.pid) && kill $PID
+pkill -f "examples/data_recorder/data_recorder.py"
+pkill -f "examples/data_recorder/run_forever.sh"
+
+STOP_COMMANDS
 # =============================================================================
 
 # 脚本所在目录（自动推断项目根目录，不依赖当前工作目录）

@@ -1,18 +1,18 @@
 """
-期货主连 LightGBM 量化研究：训练 + 回测完整流程
+期货主连 MLP 量化研究：训练 + 回测完整流程
 
 数据依赖：
     先运行  uv run python ai/data_process/prepare_futures_data.py
     确保 ai/data/lab/daily/ 下有 parquet 文件
 
 运行方式：
-    uv run python ai/train/futures_lgb_backtest.py
+    uv run python ai/train/futures_mlp_backtest.py
 
 流程：
     Step 1  加载数据      AlphaLab.load_bar_df()
     Step 2  构建因子      Alpha158 计算 158 个价量因子
     Step 3  数据处理      截面归一化 / 去 NaN
-    Step 4  训练模型      LightGBM（train / valid 早停）
+    Step 4  训练模型      MLP（train / valid 早停）
     Step 5  生成信号      在 test 区间预测
     Step 6  回测          BacktestingEngine → 统计指标 + 净值图
 """
@@ -32,7 +32,7 @@ from vnpy.alpha import AlphaLab
 from vnpy.alpha.dataset import Segment
 from vnpy.alpha.dataset.datasets.alpha_158 import Alpha158
 from vnpy.alpha.dataset.processor import process_drop_na, process_cs_norm
-from vnpy.alpha.model.models.lgb_model import LgbModel
+from vnpy.alpha.model.models.mlp_model import MlpModel
 from vnpy.alpha.strategy.backtesting import BacktestingEngine
 from functools import partial
 
@@ -60,19 +60,19 @@ TEST_PERIOD  = ("2024-07-01", "2026-04-01")
 # 加载数据时额外往前取的天数（滚动指标预热期）
 EXTENDED_DAYS = 120
 
-# LightGBM 超参数
-LGB_PARAMS = dict(
-    learning_rate=0.05,
-    num_leaves=64,
-    num_boost_round=500,
-    early_stopping_rounds=30,
-    log_evaluation_period=50,
+# MLP 超参数
+MLP_PARAMS = dict(
+    input_size=158,        # Alpha158 因子数
+    hidden_sizes=(256, 128),
+    n_epochs=200,
+    early_stop_rounds=20,
+    eval_steps=10,
     seed=42,
 )
 
 # 是否保存 dataset / model / signal 到 lab
 SAVE_ARTIFACTS = True
-ARTIFACT_NAME  = "futures_lgb_v1"
+ARTIFACT_NAME  = "futures_mlp_v1"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 期货合约参数（回测必须）
@@ -315,17 +315,17 @@ def main() -> None:
         lab.save_dataset(ARTIFACT_NAME, dataset)
         print(f"✅ dataset 已保存：{ARTIFACT_NAME}")
 
-    # ── Step 4  训练 LightGBM 模型 ─────────────────────────────────────────
+    # ── Step 4  训练 MLP 模型 ─────────────────────────────────────────────
     print("\n" + "=" * 60)
-    print("Step 4  训练 LightGBM 模型")
+    print("Step 4  训练 MLP 模型")
     print("=" * 60)
 
     import numpy as np
     from scipy.stats import spearmanr
 
-    model = LgbModel(**LGB_PARAMS)
+    model = MlpModel(**MLP_PARAMS)
 
-    print("[LGB] 训练中...")
+    print("[MLP] 训练中...")
     try:
         model.fit(dataset)
     except Exception as e:
