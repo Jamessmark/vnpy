@@ -31,7 +31,7 @@ from vnpy.trader.constant import Interval
 from vnpy.alpha import AlphaLab
 from vnpy.alpha.dataset import Segment
 from vnpy.alpha.dataset.datasets.alpha_158 import Alpha158
-from vnpy.alpha.dataset.processor import process_drop_na, process_cs_norm
+from vnpy.alpha.dataset.processor import process_drop_na, process_cs_norm, process_cs_rank_norm
 from vnpy.alpha.model.models.mlp_model import MlpModel
 from vnpy.alpha.strategy.backtesting import BacktestingEngine
 from functools import partial
@@ -61,12 +61,18 @@ TEST_PERIOD  = ("2024-07-01", "2026-04-01")
 EXTENDED_DAYS = 120
 
 # MLP 超参数
+# 实验对比：
+#   (256,128) 过拟合严重，valid早停@Step50，IC=0.014，Sharpe=0.52
+#   (64,32)   轻微过拟合，valid停@Step180，IC=0.012，Sharpe=-0.006
+#   (32,16)   欠拟合，容量不足表达158维特征间的非线性关系
+#   (128,64)  ← 推荐：平衡点，配合 weight_decay=1e-4
 MLP_PARAMS = dict(
-    input_size=158,        # Alpha158 因子数
-    hidden_sizes=(256, 128),
-    n_epochs=200,
-    early_stop_rounds=20,
+    input_size=158,           # Alpha158 因子数
+    hidden_sizes=(128, 64),   # 中等网络，平衡容量与过拟合
+    n_epochs=300,
+    early_stop_rounds=30,
     eval_steps=10,
+    weight_decay=1e-4,        # L2 正则
     seed=42,
 )
 
@@ -235,15 +241,34 @@ class FuturesLongShortStrategy(AlphaStrategy):
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 数据处理器（必须定义在模块顶层，否则无法 pickle 保存 dataset）
-# 框架标准做法：只处理 label，不处理特征
-# （特征已是无量纲比值，load_bar_df 也做了价格归一化，不需要再归一化）
+#
+# 处理顺序：
+#   1. drop_na  : 删除含 NaN 的行（特征+label 全部检查）
+#   2. feat_norm: 对所有特征做截面 rank 归一化（±1.73 范围，消除量纲差异）
+#                 Alpha158 特征量级差距可达 1000x，不归一化 MLP 无法收敛
+#   3. label_norm: 对 label 做截面 zscore 归一化（标准 Qlib 做法）
 # ─────────────────────────────────────────────────────────────────────────────
 
-# 只对 label 去除 NaN
-learn_processor_drop_na = partial(process_drop_na, names=["label"])
 
-# 只对 label 做截面 zscore 归一化（与框架示例完全一致）
-learn_processor_norm = partial(process_cs_norm, names=["label"], method="zscore")
+def _get_feature_names(df) -> list[str]:
+    """获取特征列名（排除 datetime, vt_symbol, label）"""
+    return df.columns[2:-1]
+
+
+def learn_processor_drop_na(df):
+    """删除特征和 label 中含 NaN 的行"""
+    return process_drop_na(df, names=None)
+
+
+def learn_processor_feat_norm(df):
+    """对所有特征做截面 rank 归一化（消除量纲差异，MLP 收敛必需）"""
+    feat_names = _get_feature_names(df)
+    return process_cs_rank_norm(df, names=feat_names)
+
+
+def learn_processor_label_norm(df):
+    """对 label 做截面 zscore 归一化"""
+    return process_cs_norm(df, names=["label"], method="zscore")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -300,9 +325,14 @@ def main() -> None:
         test_period=TEST_PERIOD,
     )
 
-    # 数据处理器：只处理 label（框架标准做法）
-    dataset.add_processor("learn", learn_processor_drop_na)
-    dataset.add_processor("learn", learn_processor_norm)
+    # ── 数据处理器注册（顺序严格）────────────────────────────────────────
+    # infer_processor:  特征截面 rank 归一化（推断时也生效，训练/推断分布一致）
+    #   → process_data 中：infer_df = raw_df → infer_proc → infer_df
+    # learn_processor:  在 infer_df 基础上继续做 drop_na + label 归一化
+    #   → process_data 中：learn_df = infer_df → learn_proc → learn_df
+    dataset.add_processor("infer", learn_processor_feat_norm)   # 特征 rank 归一化
+    dataset.add_processor("learn", learn_processor_drop_na)     # 删含 NaN 行
+    dataset.add_processor("learn", learn_processor_label_norm)  # label zscore
 
     print("正在并行计算因子（首次约 2~5 分钟）...")
     dataset.prepare_data(max_workers=4)
@@ -381,6 +411,23 @@ def main() -> None:
     print(f"  ICIR     : {icir:+.4f}  （|0.5| 以上认为稳定）")
     print(f"  IC>0 占比 : {ic_pos:.1%}")
 
+    # ── AUC 计算 ────────────────────────────────────────────────────────────
+    # 定义：signal > 0 预测上涨，label > 0 实际上涨，计算二分类 AUC
+    # AUC=0.5 表示随机猜测，AUC>0.5 表示有预测能力
+    from sklearn.metrics import roc_auc_score
+    try:
+        auc_data = swl.drop_nulls(subset=["signal", "label"])
+        y_score = auc_data["signal"].to_numpy()
+        y_true  = (auc_data["label"].to_numpy() > 0).astype(int)  # 实际涨 = 1
+        # 至少要有正负两类样本才能计算 AUC
+        if y_true.sum() > 0 and (1 - y_true).sum() > 0:
+            auc = roc_auc_score(y_true, y_score)
+            print(f"  AUC      : {auc:.4f}  （0.5=随机，>0.52 认为有效）")
+        else:
+            print(f"  AUC      : N/A（样本全为同一类）")
+    except Exception as e:
+        print(f"  AUC      : 计算失败 ({e})")
+
     # ── Step 7  回测 ───────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("Step 7  回测")
@@ -398,7 +445,9 @@ def main() -> None:
     )
     engine.add_strategy(
         FuturesLongShortStrategy,
-        setting={"top_k": 5, "n_drop": 2, "min_hold_days": 1, "price_add": 0.002},
+        # top_k=5 多空各5个，n_drop=1 每次最多换1个（降低换手），min_hold_days=3 最少持仓3天
+        # 手续费是最大杀手：之前每天换7笔，手续费吃掉64%利润 → 减少换手是首要优化
+        setting={"top_k": 5, "n_drop": 1, "min_hold_days": 3, "price_add": 0.002},
         signal_df=sig_df,
     )
     engine.load_data()

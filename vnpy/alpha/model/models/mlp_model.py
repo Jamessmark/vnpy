@@ -172,6 +172,16 @@ class MlpModel(AlphaModel):
             features = df.select(df.columns[2: -1]).to_numpy()
             labels = np.array(df["label"])
 
+            # Replace NaN/inf in features with 0 to prevent training collapse
+            features = np.nan_to_num(features, nan=0.0, posinf=0.0, neginf=0.0)
+            # Replace NaN/inf in labels with 0 to prevent loss from becoming NaN
+            labels = np.nan_to_num(labels, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Clip extreme label values (±10 sigmas) to suppress outlier impact
+            label_std = labels.std()
+            if label_std > 0:
+                labels = np.clip(labels, -10 * label_std, 10 * label_std)
+
             # Store feature and label data
             train_valid_data["x"][segment] = torch.from_numpy(features).float().to(self.device)
             train_valid_data["y"][segment] = torch.from_numpy(labels).float().to(self.device)
@@ -404,6 +414,8 @@ class MlpModel(AlphaModel):
         df = df.sort(["datetime", "vt_symbol"])
 
         data: np.ndarray = df.select(df.columns[2: -1]).to_numpy()
+        # Replace NaN/inf in inference features with 0 to prevent prediction output from becoming NaN
+        data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0)
 
         return cast(np.ndarray, self._predict_batch(torch.Tensor(data)))
 

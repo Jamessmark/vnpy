@@ -129,5 +129,6 @@ class Alpha158(AlphaDataset):
         # Set label
         # self.set_label("ts_delay(close, -3) / ts_delay(close, -1) - 1")
         # self.set_label("ts_delay(close, -2) / ts_delay(close, -1) - 1")  # T+2/T+1，IC较低
-        # T 日因子预测 T+1 日收益（标准做法，IC最高，实盘T+1开盘执行滑点可接受）
-        self.set_label("ts_delay(close, -1) / close - 1")
+        # self.set_label("ts_delay(close, -1) / close - 1")  # T 日因子预测 T+1 日收益
+        # T 日因子预测 T+3 日收益（三天后涨幅）
+        self.set_label("ts_delay(close, -3) / close - 1")

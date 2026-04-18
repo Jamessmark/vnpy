@@ -9,7 +9,8 @@ from .utility import to_datetime
 def process_drop_na(df: pl.DataFrame, names: list[str] | None = None) -> pl.DataFrame:
     """Remove rows with missing values"""
     if names is None:
-        names = df.columns[2:-1]
+        # 默认包含特征列+label列（columns[2:]），确保 label NaN 也被清除
+        names = df.columns[2:]
 
     for name in names:
         df = df.with_columns(
@@ -44,7 +45,7 @@ def process_cs_norm(
         for col in names:
             df = df.with_columns(
                 _df.select(
-                    (pl.col(col) - pl.col(col).median()).over("datetime").alias(col),
+                    ((pl.col(col) - pl.col(col).median()).over("datetime")).alias(col),
                 )
             )
 
@@ -68,7 +69,7 @@ def process_cs_norm(
             )
 
             df = df.with_columns(
-                (pl.col(col) - pl.col("mean")) / pl.col("std").alias(col)
+                ((pl.col(col) - pl.col("mean")) / (pl.col("std") + 1e-12)).alias(col)
             ).drop(["mean", "std"])
 
     return df
