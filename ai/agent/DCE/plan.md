@@ -224,45 +224,56 @@ class DCEMappingStore:
 
 **重要**：必须下载**全部合约**（不能只下载主力），才能动态识别主力和次主力
 
-#### 存储结构
+#### 存储结构（数据库方案）⭐
+
+**核心理念**：参考 `build_main_contract.py`，所有数据存入 vnpy 数据库（`~/.vntrader/database.db`）
 
 ```
+~/.vntrader/
+  ├── database.db                  # ⭐ vnpy 主数据库（SQLite）
+  │   # 表：dbbardata
+  │   # 存储所有合约的K线数据：
+  │   #   - 原始合约：a2505.DCE, a2507.DCE, a2509.DCE ...
+  │   #   - 加权合成：a888.LOCAL (用于Alpha158)
+  │   #   - 新主力：a2507.LOCAL
+  │   #   - 次主力：a2509.LOCAL
+  │   #   - 旧主力：a2505.LOCAL（如有）
+  │
+  └── main_contract_mapping.db     # ⭐ 主力映射表（SQLite）
+      # 表：main_contract_mapping
+      # product | exchange | trade_date | dominant | sub_dominant | open_interest
+      # a       | DCE      | 2026-04-19 | a2507    | a2509        | 150000
+
+# 辅助数据（Parquet 备份）
 data/dce/
-  ├── raw_contracts/              # 原始合约数据（全部合约）
-  │   ├── a/                      # 豆一
-  │   │   ├── a2505.parquet       # 单个合约历史
-  │   │   ├── a2507.parquet
-  │   │   ├── a2509.parquet
-  │   │   └── ...
-  │   ├── m/                      # 豆粕
-  │   └── ...
-  │
-  ├── main_contracts/             # ⭐ 4种主力相关合约（参考 build_main_contract.py）
-  │   ├── a2505.parquet           # 旧主力（如无数据则不存在）
-  │   ├── a2507.parquet           # 新主力（当前主力）
-  │   ├── a2509.parquet           # 次主力
-  │   ├── a888.parquet            # ⭐ 加权合成（主力+次主力）→ 用于Alpha158
-  │   ├── m2507.parquet
-  │   ├── m2509.parquet
-  │   ├── m2511.parquet
-  │   ├── m888.parquet            # ⭐ 加权合成
-  │   └── ...
-  │
-  ├── main_contract_mapping.db    # ⭐ SQLite数据库（主力映射表）
-  │   # 表结构：
-  │   # product | exchange | trade_date | dominant | sub_dominant | open_interest
-  │   # a       | DCE      | 2026-04-19 | a2507    | a2509        | 150000
-  │
-  ├── warehouse_bill.parquet      # 仓单历史
+  ├── warehouse_bill.parquet      # 仓单历史（DCE API 未存入数据库）
   ├── member_ranking.parquet      # 会员排名历史
   └── trade_params.parquet        # 交易参数历史
 ```
 
-**说明**：
-- `raw_contracts/`: 保存全部合约原始数据，用于主力识别
-- `main_contracts/`: 只保存4种关键合约（旧主力、新主力、次主力、888加权）
-- `a888.parquet`: **加权合成合约，用于Alpha158计算**（价格按成交量加权，量能求和）
-- `main_contract_mapping.db`: SQLite数据库，记录每日主力和次主力变化
+**数据库命名规则**：
+
+| 数据类型 | Symbol格式 | Exchange | 是否存储 | 说明 |
+|---------|-----------|----------|---------|------|
+| **原始合约** | `a2505` | `DCE` | ✅ 存储 | DCE API 下载的原始数据 |
+| **加权合成** | `a888` | `DCE` | ✅ 存储 | **旧主力+新主力+次主力**加权合成 → **Alpha158计算** ⭐ |
+| **新主力** | `a2507` | `DCE` | ✅ 存储 | 当前主力合约（与原始合约重复，但便于查询） |
+| **次主力** | `a2509` | `DCE` | ✅ 存储 | 次主力合约（与原始合约重复，但便于查询） |
+| **旧主力** | `a2505` | `DCE` | ✅ 存储 | 上一个主力合约（与原始合约重复，但便于查询） |
+
+**关键说明**：
+1. **Exchange 统一使用 DCE**：所有合约（包括888）都用 `exchange=DCE`，不使用 `LOCAL`
+2. **新主力/次主力/旧主力会重复存储**：例如 `a2507.DCE` 既是原始合约，又是新主力合约，数据完全相同
+3. **增量下载策略**：
+   - 首次运行：下载最近100天全部合约数据
+   - 每日运行：检查数据库最新日期，只下载缺失数据
+   - 历史补全：如果识别出新合约（如旧主力），但数据库无其历史，则回填
+
+**优势**：
+1. 统一使用 `vnpy.trader.database` 接口读写数据
+2. 与 vnpy 系统无缝集成（图表、回测都能直接用）
+3. 支持增量更新（`save_bar_data()` 自动去重）
+4. SQLite 查询性能优秀
 
 #### 增量更新流程（参考 build_main_contract.py）
 

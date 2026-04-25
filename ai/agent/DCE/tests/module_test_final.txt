@@ -1,0 +1,164 @@
+Traceback (most recent call last):
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connection.py", line 204, in _new_conn
+    sock = connection.create_connection(
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/util/connection.py", line 60, in create_connection
+    for res in socket.getaddrinfo(host, port, family, socket.SOCK_STREAM):
+  File "/Users/lishengkun/.local/share/uv/python/cpython-3.10-macos-aarch64-none/lib/python3.10/socket.py", line 967, in getaddrinfo
+    for res in _socket.getaddrinfo(host, port, family, type, proto, flags):
+socket.gaierror: [Errno 8] nodename nor servname provided, or not known
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connectionpool.py", line 787, in urlopen
+    response = self._make_request(
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connectionpool.py", line 488, in _make_request
+    raise new_e
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connectionpool.py", line 464, in _make_request
+    self._validate_conn(conn)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connectionpool.py", line 1093, in _validate_conn
+    conn.connect()
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connection.py", line 759, in connect
+    self.sock = sock = self._new_conn()
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connection.py", line 211, in _new_conn
+    raise NameResolutionError(self.host, self, e) from e
+urllib3.exceptions.NameResolutionError: HTTPSConnection(host='push.dce.com.cn', port=443): Failed to resolve 'push.dce.com.cn' ([Errno 8] nodename nor servname provided, or not known)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/adapters.py", line 645, in send
+    resp = conn.urlopen(
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/connectionpool.py", line 841, in urlopen
+    retries = retries.increment(
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/urllib3/util/retry.py", line 535, in increment
+    raise MaxRetryError(_pool, url, reason) from reason  # type: ignore[arg-type]
+urllib3.exceptions.MaxRetryError: HTTPSConnectionPool(host='push.dce.com.cn', port=443): Max retries exceeded with url: /cms/auth/accessToken (Caused by NameResolutionError("HTTPSConnection(host='push.dce.com.cn', port=443): Failed to resolve 'push.dce.com.cn' ([Errno 8] nodename nor servname provided, or not known)"))
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/tests/test_modules.py", line 25, in test_dce_api
+    trade_date = client.get_max_trade_date()
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/data_collector/dce_api.py", line 104, in get_max_trade_date
+    data = self._api_request("GET", "/forward/publicweb/maxTradeDate")
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/data_collector/dce_api.py", line 83, in _api_request
+    token = self._get_token()
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/data_collector/dce_api.py", line 61, in _get_token
+    response = requests.post(url, json=data, headers=headers, timeout=10)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/api.py", line 115, in post
+    return request("post", url, data=data, json=json, **kwargs)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/api.py", line 59, in request
+    return session.request(method=method, url=url, **kwargs)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/sessions.py", line 592, in request
+    resp = self.send(prep, **send_kwargs)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/sessions.py", line 706, in send
+    r = adapter.send(request, **kwargs)
+  File "/Users/lishengkun/MyDocuments/Duke/stock/vnpy/.venv/lib/python3.10/site-packages/requests/adapters.py", line 678, in send
+    raise ConnectionError(e, request=request)
+requests.exceptions.ConnectionError: HTTPSConnectionPool(host='push.dce.com.cn', port=443): Max retries exceeded with url: /cms/auth/accessToken (Caused by NameResolutionError("HTTPSConnection(host='push.dce.com.cn', port=443): Failed to resolve 'push.dce.com.cn' ([Errno 8] nodename nor servname provided, or not known)"))
+
+============================================================
+🧪 DCE 决策系统 - 模块单元测试
+============================================================
+
+============================================================
+测试模块 1: DCE API 客户端
+============================================================
+🔍 调试: DCE_API_KEY = 8hc38jvtp3gb
+🔍 调试: DCE_API_SECRET = wxcXh4f2pFtgAIGt4$Rt
+🔍 调试: .env 路径 = /Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/.env
+
+[测试 1.1] 获取最新交易日...
+
+❌ 测试失败: HTTPSConnectionPool(host='push.dce.com.cn', port=443): Max retries exceeded with url: /cms/auth/accessToken (Caused by NameResolutionError("HTTPSConnection(host='push.dce.com.cn', port=443): Failed to resolve 'push.dce.com.cn' ([Errno 8] nodename nor servname provided, or not known)"))
+
+============================================================
+测试模块 2: 主力合约管理
+============================================================
+
+[测试 2.1] 品种前缀提取...
+✅ 品种前缀提取正确
+
+[测试 2.2] 主力映射表存储...
+✅ 保存 1 条记录
+✅ 查询主力合约: a2507
+
+[测试 2.3] 加权合成计算...
+✅ 加权合成成功
+  加权收盘价: 3501.11
+  总成交量: 180000
+  总持仓量: 270000
+
+------------------------------------------------------------
+✅ 主力合约管理测试通过
+
+============================================================
+测试模块 3: Alpha158 因子计算
+============================================================
+
+[测试 3.1] 创建模拟数据...
+✅ 创建了 100 天的模拟数据
+
+[测试 3.2] 计算 Alpha158 特征...
+✅ 计算了 43 个特征
+
+  部分特征:
+    return_1d: 0.0025
+    return_5d: 0.0015
+    return_10d: 0.0057
+    return_20d: 0.0055
+    return_30d: 0.0063
+    return_60d: -0.0153
+    ma_5: 3411.6102
+    close_div_ma_5: 0.0020
+    ma_10: 3411.1478
+    close_div_ma_10: 0.0021
+
+------------------------------------------------------------
+✅ Alpha158 因子计算测试通过
+
+============================================================
+测试模块 4: 新闻情绪分析
+============================================================
+
+[测试 4.1] 情绪分析逻辑测试...
+✅ 情绪分析完成
+  情绪标签: 偏多
+  情绪得分: 0.80
+  摘要: 分析了2条新闻，整体情绪偏多（得分: 0.80）
+
+------------------------------------------------------------
+✅ 新闻情绪分析测试通过
+
+============================================================
+测试模块 5: LLM 决策顾问
+============================================================
+
+[测试 5.1] 生成决策报告...
+✅ 决策报告生成成功
+  综合得分: 18.0
+  市场观点: 中性
+  操作建议: 观望为主
+
+[测试 5.2] 生成批量报告...
+✅ 报告已保存: /Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/reports/test_report.md
+✅ 批量报告生成成功
+  报告长度: 523 字符
+
+------------------------------------------------------------
+✅ LLM 决策顾问测试通过
+
+============================================================
+📊 测试结果汇总
+============================================================
+DCE API 客户端: ❌ 失败
+主力合约管理: ✅ 通过
+Alpha158 计算: ✅ 通过
+新闻情绪分析: ✅ 通过
+LLM 决策顾问: ✅ 通过
+
+总计: 5 个模块
+通过: 4 个
+失败: 1 个
+通过率: 80.0%
