@@ -1,19 +1,19 @@
 """
-郑商所 2026 年期货日K线导入工具
+郑商所期权日K线导入工具
 
-将 ai/data/czce/2026/ 目录下的所有品种文件批量导入 vnpy 数据库。
-合约代码统一转换为4位年份格式（如 MA601 → MA2601）。
-
-(修复版：先汇总所有文件去重，再按symbol合并后保存，避免覆盖问题)
+将 ai/data/czce_options/{year}/ 目录下的所有期权数据导入 vnpy 数据库。
+合约代码格式：SR603C4600 → SR2603-C-4600
 
 使用方法：
-    uv run python ai/data_process/import_czce_2026.py
-    uv run python ai/data_process/import_czce_2026.py --force  # 强制覆盖模式
+    uv run python ai/data_process/import_czce_options.py
+    uv run python ai/data_process/import_czce_options.py --year 2026
+    uv run python ai/data_process/import_czce_options.py --force  # 强制覆盖模式
 """
 
 import argparse
 import re
 import sys
+from collections import defaultdict
 from datetime import datetime, time
 from pathlib import Path
 
@@ -28,50 +28,48 @@ from vnpy.trader.object import BarData
 # 路径配置
 # ─────────────────────────────────────────────────────────────
 
-DATA_DIR = Path(__file__).parent.parent / "data" / "czce" / "2026"
-FILE_YEAR = 2026
+DATA_ROOT = Path(__file__).parent.parent / "data" / "czce_options"
 
 
 # ─────────────────────────────────────────────────────────────
-# 合约代码转换（3位 → 4位年份格式）
+# 合约代码转换
+# SR603C4600 → SR2603-C-4600
+# SR605P5800 → SR2605-P-5800
 # ─────────────────────────────────────────────────────────────
 
-def czce_code_to_vnpy(raw_code: str) -> str | None:
+def czce_option_code_to_vnpy(raw_code: str, file_year: int = 2026) -> str | None:
     """
-    将郑商所3位合约代码转换为4位年份格式
+    将郑商所期权代码转换为vnpy格式
 
     例：
-      MA601 → MA2601  （甲醇 2026年01月）
-      SA612 → SA2612  （纯碱 2026年12月）
-      TA709 → TA2709  （PTA  2027年09月）
+      SR603C4600 → SR2603-C-4600  （白糖 2026年03月 看涨期权 行权价4600）
+      SR605P5800 → SR2605-P-5800  （白糖 2026年05月 看跌期权 行权价5800）
     """
     code = raw_code.strip()
     if not code:
         return None
 
-    m = re.match(r'^([A-Za-z]+)(\d+)$', code)
+    # SR603C4600 格式: 品种(2位) + 年月(3位) + C/P(1位) + 行权价(变长)
+    m = re.match(r'^([A-Za-z]+)(\d{3})([CP])(\d+)$', code)
     if not m:
         return None
 
     prefix = m.group(1).upper()
-    digits = m.group(2)
+    digits = m.group(2)  # 如 603
+    option_type = m.group(3)  # C 或 P
+    strike = m.group(4)  # 行权价
 
-    if len(digits) == 3:
-        # 郑商所3位格式：年末位 + 月份2位
-        year_digit = int(digits[0])
-        month_str = digits[1:3]
-        # 推断完整年份（2026年代）
-        decade = (FILE_YEAR // 10) * 10   # 2020
-        full_year = decade + year_digit
-        if full_year < FILE_YEAR - 2:
-            full_year += 10
-        return f"{prefix}{full_year % 100:02d}{month_str}"
+    # 3位格式：末位数字是年份 + 月份2位
+    year_digit = int(digits[0])
+    month_str = digits[1:3]
 
-    elif len(digits) == 4:
-        # 已是4位，直接返回
-        return f"{prefix}{digits}"
+    # 推断完整年份
+    decade = (file_year // 10) * 10
+    full_year = decade + year_digit
+    if full_year < file_year - 2:
+        full_year += 10
 
-    return None
+    return f"{prefix}{full_year % 100:02d}{month_str}-{option_type}-{strike}"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -88,13 +86,13 @@ def parse_number(s: str) -> float:
         return 0.0
 
 
-def parse_line(line: str) -> BarData | None:
+def parse_line(line: str, file_year: int) -> BarData | None:
     """
-    解析一行郑商所日K线数据
+    解析一行郑商所期权日K线数据
 
     列格式（竖线分隔）：
     交易日期 | 合约代码 | 昨结算 | 今开盘 | 最高价 | 最低价 | 今收盘 | 今结算 |
-    涨跌1 | 涨跌2 | 成交量(手) | 持仓量 | 增减量 | 成交额(万元) | 交割结算价
+    涨跌1 | 涨跌2 | 成交量 | 持仓量 | 增减量 | 成交额 | DELTA | 隐含波动率 | 行权量
     """
     line = line.strip()
     if not line:
@@ -104,19 +102,20 @@ def parse_line(line: str) -> BarData | None:
     if not re.match(r'^\d{4}-\d{2}-\d{2}', line):
         return None
 
+    # 按竖线分割
     parts = [p.strip() for p in line.split('|')]
-    if len(parts) < 13:
+    if len(parts) < 14:
         return None
 
     try:
         trade_date = datetime.strptime(parts[0].strip(), '%Y-%m-%d')
-        raw_code   = parts[1].strip()
-        open_price  = parse_number(parts[3])
-        high_price  = parse_number(parts[4])
-        low_price   = parse_number(parts[5])
+        raw_code = parts[1].strip()
+        open_price = parse_number(parts[3])
+        high_price = parse_number(parts[4])
+        low_price = parse_number(parts[5])
         close_price = parse_number(parts[6])
-        volume      = parse_number(parts[10])
-        turnover    = parse_number(parts[13]) * 10000 if len(parts) > 13 else 0.0
+        volume = parse_number(parts[10])
+        turnover = parse_number(parts[13]) * 10000 if len(parts) > 13 else 0.0
         open_interest = parse_number(parts[11])
     except (ValueError, IndexError):
         return None
@@ -125,7 +124,7 @@ def parse_line(line: str) -> BarData | None:
     if open_price == 0 and high_price == 0 and close_price == 0:
         return None
 
-    symbol = czce_code_to_vnpy(raw_code)
+    symbol = czce_option_code_to_vnpy(raw_code, file_year)
     if not symbol:
         return None
 
@@ -141,7 +140,7 @@ def parse_line(line: str) -> BarData | None:
         volume=volume,
         turnover=turnover,
         open_interest=open_interest,
-        gateway_name="CZCE_HIST",
+        gateway_name="CZCE_OPT",
     )
 
 
@@ -149,13 +148,13 @@ def parse_line(line: str) -> BarData | None:
 # 文件解析
 # ─────────────────────────────────────────────────────────────
 
-def parse_file(filepath: Path) -> list[BarData]:
+def parse_file(filepath: Path, file_year: int) -> list[BarData]:
     """解析单个品种文件"""
     bars: list[BarData] = []
     try:
-        with open(filepath, encoding='gbk', errors='replace') as f:
+        with open(filepath, encoding='utf-8', errors='replace') as f:
             for line in f:
-                bar = parse_line(line)
+                bar = parse_line(line, file_year)
                 if bar:
                     bars.append(bar)
     except FileNotFoundError:
@@ -164,11 +163,11 @@ def parse_file(filepath: Path) -> list[BarData]:
 
 
 # ─────────────────────────────────────────────────────────────
-# 主程序
+# 去重
 # ─────────────────────────────────────────────────────────────
 
 def deduplicate_bars(bars: list[BarData]) -> list[BarData]:
-    """按 (symbol, date) 去重，保留第一条"""
+    """按 (symbol, date) 去重"""
     seen: dict[tuple[str, str], BarData] = {}
     for bar in bars:
         key = (bar.symbol, bar.datetime.date().isoformat())
@@ -177,44 +176,52 @@ def deduplicate_bars(bars: list[BarData]) -> list[BarData]:
     return list(seen.values())
 
 
+# ─────────────────────────────────────────────────────────────
+# 主程序
+# ─────────────────────────────────────────────────────────────
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="郑商所2026年日K线导入工具")
+    parser = argparse.ArgumentParser(description="郑商所期权日K线导入工具")
+    parser.add_argument("--year", type=int, default=2026, help="数据年份（默认2026）")
     parser.add_argument(
         "--symbols", nargs="+",
-        help="只导入指定品种（如 MA SA TA），不指定则导入全部"
+        help="只导入指定品种（如 SR CF），不指定则导入全部"
     )
     parser.add_argument(
         "--force", action="store_true",
-        help="强制覆盖模式：先删除旧数据再写入"
+        help="强制覆盖模式"
     )
     args = parser.parse_args()
 
+    data_dir = DATA_ROOT / str(args.year)
+
     # 获取待导入的文件列表
-    all_files = sorted(DATA_DIR.glob("*FUTURES2026.txt"))
+    all_files = sorted(data_dir.glob("*OPTIONS*.txt"))
     if not all_files:
-        print(f"❌ 未找到数据文件，请先运行 download_czce.py 下载")
-        print(f"   期望路径：{DATA_DIR}")
+        print(f"❌ 未找到数据文件，请先运行 download_czce_options.py 下载")
+        print(f"   期望路径：{data_dir}")
         return
 
     if args.symbols:
         filter_set = {s.upper() for s in args.symbols}
-        files = [f for f in all_files if f.name[:f.name.index('FUTURES')] in filter_set]
+        files = [f for f in all_files if any(f.name.startswith(s) for s in filter_set)]
     else:
         files = all_files
 
-    print(f"\n郑商所 2026 年日K线导入")
+    print(f"\n郑商所期权 {args.year} 年日K线导入")
     print(f"{'='*50}")
-    print(f"数据目录：{DATA_DIR}")
+    print(f"数据目录：{data_dir}")
     print(f"待导入文件：{len(files)} 个")
     if args.force:
-        print("⚠️  覆盖模式：先删除旧数据再写入")
+        print("⚠️  覆盖模式")
 
     # 第一步：汇总所有文件
     print(f"\n📖 第一步：读取所有文件...")
     all_bars: list[BarData] = []
     for fpath in files:
-        bars = parse_file(fpath)
+        bars = parse_file(fpath, args.year)
         all_bars.extend(bars)
+        print(f"   {fpath.name}: {len(bars)} 条")
     print(f"   汇总得到 {len(all_bars):,} 根K线")
 
     # 第二步：去重
@@ -226,65 +233,31 @@ def main() -> None:
     print(f"\n💾 第三步：写入数据库...")
     db = get_database()
 
-    from collections import defaultdict
     by_symbol: defaultdict[str, list[BarData]] = defaultdict(list)
     for bar in all_bars:
         by_symbol[bar.symbol].append(bar)
 
     total_saved = 0
-    total_errors = 0
-
     for symbol, bars in sorted(by_symbol.items()):
-        # 读取 DB 已有数据
-        existing = db.load_bar_data(
-            symbol, Exchange.CZCE, Interval.DAILY,
-            None, None
-        )
+        existing = db.load_bar_data(symbol, Exchange.CZCE, Interval.DAILY, None, None)
         existing_dates = {bar.datetime.date() for bar in existing}
 
         if args.force:
-            # 覆盖模式：只用新数据
-            db.save_bar_data(bars)
-            saved_count = len(bars)
+            new_bars = bars
         else:
-            # 增量模式：合并新旧数据
             new_bars = [b for b in bars if b.datetime.date() not in existing_dates]
-            if new_bars:
-                db.save_bar_data(bars)
-                saved_count = len(bars)
-            else:
-                saved_count = 0
 
-        print(f"   {symbol}: {len(bars)} 条 ({'+' if args.force else '合并'}写入 {saved_count})")
-        total_saved += saved_count
+        if new_bars:
+            db.save_bar_data(bars)  # 保存全部（包含旧的）
+            total_saved += len(bars)
+            print(f"   {symbol}: {len(bars)} 条")
+        else:
+            print(f"   {symbol}: {len(bars)} 条 (无需更新)")
 
     print(f"\n{'='*50}")
     print(f"✅ 导入完成")
     print(f"   总记录数: {len(all_bars):,}")
     print(f"   成功写入: {total_saved:,}")
-    print(f"   错误: {total_errors}")
-
-    # 重建 CZCE 日K overview（确保新数据被索引）
-    print("\n重建 CZCE 日K overview 索引...")
-    import sqlite3
-    db_path = Path.home() / ".vntrader" / "database.db"
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("DELETE FROM dbbaroverview WHERE exchange='CZCE' AND interval='d'")
-        conn.execute("""
-            INSERT INTO dbbaroverview (symbol, exchange, interval, count, start, end)
-            SELECT symbol, exchange, interval,
-                   COUNT(*) AS count,
-                   MIN(datetime) AS start,
-                   MAX(datetime) AS end
-            FROM dbbardata
-            WHERE exchange='CZCE' AND interval='d'
-            GROUP BY symbol, exchange, interval
-        """)
-        count = conn.execute(
-            "SELECT COUNT(*) FROM dbbaroverview WHERE exchange='CZCE' AND interval='d'"
-        ).fetchone()[0]
-        conn.commit()
-    print(f"✅ overview 重建完成，共 {count} 条记录")
 
 
 if __name__ == "__main__":
