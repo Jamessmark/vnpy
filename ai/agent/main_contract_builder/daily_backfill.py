@@ -44,7 +44,8 @@ from ai.agent.main_contract_builder.builder import (
 )
 
 
-# 交易日切割点：>=16:00 视为下一交易日（夜盘）
+# 交易日切割点：>=16:00 视为下一交易日（夜盘属于次日交易日）
+# 交易日定义：前一日 21:00 夜盘开始 → 当日 15:00 日盘收盘
 NIGHT_SESSION_START = time(16, 0)
 
 
@@ -117,7 +118,6 @@ def convert_symbol_minute_to_daily(
     db,
     minute_ov=None,
     daily_ov=None,
-    include_today: bool = False,
     dry_run: bool = False,
 ) -> SymbolDailyBackfillStat:
     """单合约：分钟K增量聚合补日K"""
@@ -189,9 +189,11 @@ def convert_symbol_minute_to_daily(
             message="聚合后为空",
         )
 
-    # 默认不包含当日
+    # 交易日逻辑：前一日夜盘(21:00) + 当日日盘(09:00~15:00) = 完整交易日
+    # 16:00 执行时当天交易日已完整收盘，应允许落库当天交易日（d <= today）
+    # 只过滤未来日期（理论上不会出现，防御性保留）
     today = date.today()
-    candidates = [d for d in sorted(agg.keys()) if include_today or d < today]
+    candidates = [d for d in sorted(agg.keys()) if d <= today]
     if not candidates:
         return SymbolDailyBackfillStat(
             symbol=symbol,
@@ -249,7 +251,6 @@ def convert_symbol_minute_to_daily(
 
 def backfill_exchange(
     exchange: str,
-    include_today: bool = False,
     dry_run: bool = False,
     verbose: bool = True,
 ) -> Dict:
@@ -297,7 +298,6 @@ def backfill_exchange(
             db=db,
             minute_ov=minute_ov_map.get(symbol),
             daily_ov=daily_ov_map.get(symbol),
-            include_today=include_today,
             dry_run=dry_run,
         )
         daily_stats.append(st)
@@ -422,7 +422,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="每日16:00补齐脚本：分钟K->日K->主连(888)")
     parser.add_argument("--exchange", "-e", default="DCE", help="交易所（DCE/CZCE/SHFE/INE/GFEX/CFFEX）")
     parser.add_argument("--all", "-a", action="store_true", help="处理全部交易所")
-    parser.add_argument("--include-today", action="store_true", help="包含当日交易日（默认不包含）")
+    parser.add_argument("--include-today", action="store_true", help="已废弃，16:00执行时当日交易日默认已完整，保留此参数以向后兼容")
     parser.add_argument("--dry-run", action="store_true", help="只探测不落库")
     parser.add_argument("--json", action="store_true", help="打印JSON结果")
     parser.add_argument("--report", type=Path, default=None, help="写入JSON报告路径")
@@ -435,7 +435,6 @@ def main() -> None:
         try:
             all_summary[ex] = backfill_exchange(
                 exchange=ex,
-                include_today=args.include_today,
                 dry_run=args.dry_run,
                 verbose=True,
             )

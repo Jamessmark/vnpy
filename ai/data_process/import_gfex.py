@@ -35,17 +35,21 @@ from vnpy.trader.object import BarData
 # 广期所交易所代码
 GFEX_EXCHANGE = Exchange.GFEX
 
-# CSV 列索引
-COL_DATE = 0       # 交易日期
-COL_CODE = 3       # 合约代码
-COL_OPEN = 4       # 开盘价
-COL_HIGH = 5       # 最高价
-COL_LOW = 6        # 最低价
-COL_CLOSE = 7      # 收盘价
-COL_SETTLE = 8    # 结算价
-COL_VOLUME = 11    # 成交量
-COL_OI = 12       # 持仓量
-COL_TURNOVER = 13 # 成交额
+# CSV 列索引（共16列，0-based）
+# 0:交易日期, 1:品种名称, 2:交割月份, 3:合约代码,
+# 4:前结算价, 5:开盘价, 6:最高价, 7:最低价,
+# 8:收盘价, 9:结算价, 10:涨跌, 11:涨跌1,
+# 12:成交量, 13:持仓量, 14:持仓量变化, 15:成交额
+COL_DATE     = 0   # 交易日期
+COL_CODE     = 3   # 合约代码
+COL_OPEN     = 5   # 开盘价
+COL_HIGH     = 6   # 最高价
+COL_LOW      = 7   # 最低价
+COL_CLOSE    = 8   # 收盘价
+COL_SETTLE   = 9   # 结算价
+COL_VOLUME   = 12  # 成交量
+COL_OI       = 13  # 持仓量
+COL_TURNOVER = 15  # 成交额
 
 
 def parse_date(date_str: str) -> datetime:
@@ -236,16 +240,12 @@ def save_bars(db, bars: list, force: bool = False) -> int:
                     datetime(2000, 1, 1),
                     datetime(2100, 12, 31)
                 )
-                
-                # 合并
-                existing_dates = {bar.datetime.date() for bar in existing}
-                bars_to_save = list(existing)
-                
-                for bar in symbol_bars:
-                    if bar.datetime.date() not in existing_dates:
-                        bars_to_save.append(bar)
-                        existing_dates.add(bar.datetime.date())
-                
+
+                # force 模式：新数据优先，用新数据覆盖旧数据（同日期取新数据）
+                new_dates = {bar.datetime.date() for bar in symbol_bars}
+                kept_existing = [bar for bar in existing if bar.datetime.date() not in new_dates]
+                bars_to_save = kept_existing + symbol_bars
+
                 if existing:
                     print(f"      覆盖 {symbol}: 已有{len(existing)}条, 新增{len(symbol_bars)}条, 合并后{len(bars_to_save)}条")
                 else:
