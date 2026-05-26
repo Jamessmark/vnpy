@@ -28,12 +28,16 @@ DCE 大商所主要品种：豆一、豆二、玉米、玉米淀粉、豆粕、�
     # 指定输出文件名
     uv run python ai/agent/DCE/run.py --output my_report.md
 """
+import os
 import sys
 from pathlib import Path
 from datetime import date, datetime
 import argparse
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 # ── 数据采集层 ───────────────────────────────────────────────────────────────
 from ai.agent.DCE.data_collector.collector import daily_update
@@ -48,6 +52,49 @@ from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES
 
 # 报告目录
 _REPORT_DIR = Path(__file__).parent / "reports"
+
+
+def _send_report_email(report_path: Path, target_date: date) -> None:
+    """
+    用 yagmail 将报告以 HTML 邮件发送到 163 邮箱。
+    邮件正文 = Markdown 原文（纯文本），附件 = .md 报告文件。
+    所需 .env 配置：
+        MAIL_USER     发件人 163 邮箱账号
+        MAIL_PASSWORD 163 SMTP 授权码（非登录密码）
+        MAIL_TO       收件人邮箱（默认同发件人）
+    """
+    import yagmail
+
+    user     = os.getenv("MAIL_USER", "").strip()
+    password = os.getenv("MAIL_PASSWORD", "").strip()
+    to       = os.getenv("MAIL_TO", user).strip()
+
+    if not user or not password:
+        print("  ⚠️ 邮件未发送：.env 中 MAIL_USER / MAIL_PASSWORD 未配置")
+        return
+
+    subject = f"📊 DCE 大商所日报 {target_date.isoformat()}"
+
+    # 读取报告正文（Markdown 纯文本作为邮件正文）
+    body = report_path.read_text(encoding="utf-8") if report_path.exists() else "（报告文件未找到）"
+
+    try:
+        yag = yagmail.SMTP(
+            user     = user,
+            password = password,
+            host     = "smtp.163.com",
+            port     = 994,
+            smtp_ssl = True,
+        )
+        yag.send(
+            to          = to,
+            subject     = subject,
+            contents    = body,
+            attachments = str(report_path) if report_path.exists() else None,
+        )
+        print(f"  ✅ 报告已发送至 {to}")
+    except Exception as e:
+        print(f"  ❌ 邮件发送失败: {e}")
 
 
 def main(
@@ -192,6 +239,10 @@ def main(
         report_path = _REPORT_DIR / output_file
         advisor.generate_batch_report(reports, output_file)
         print(f"\n✅ 汇总报告已生成: {report_path}")
+
+        # ── Step 5: 发送邮件 ────────────────────────────────────────────────
+        print("\n[步骤 5/5] 发送邮件报告...")
+        _send_report_email(report_path, target_date)
 
     print("\n" + "=" * 60)
     print("✅ DCE 决策系统运行完成！")

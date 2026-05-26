@@ -327,19 +327,18 @@ class LLMAdvisor:
         md += "---\n\n"
 
         # ── 核心建议摘要表（按评分绝对值排序）────────────────────────────────
-        if len(enriched) > 1:
-            md += "## 📊 核心建议速览\n\n"
-            md += "| 品种 | 收盘价 | 综合评分 | 方向 | 核心理由 |\n"
-            md += "|------|--------|----------|------|----------|\n"
-            for r in enriched:
-                vname  = r.get("variety_name", "")
-                close  = r.get("close_price", 0)
-                score  = r["_score"]
-                direc  = r["_direction"]
-                reason = r["_reason"] or "—"
-                score_str = f"{score:+.0f}" if score != 0 else "0"
-                md += f"| {vname} | {close:.2f} | {score_str} | {direc} | {reason} |\n"
-            md += "\n---\n\n"
+        md += "## 📊 核心建议速览\n\n"
+        md += "| 品种 | 收盘价 | 综合评分 | 方向 | 核心理由 |\n"
+        md += "|------|--------|----------|------|----------|\n"
+        for r in enriched:
+            vname  = r.get("variety_name", "")
+            close  = r.get("close_price", 0)
+            score  = r["_score"]
+            direc  = r["_direction"]
+            reason = r["_reason"] or "—"
+            score_str = f"{score:+.0f}" if score != 0 else "0"
+            md += f"| {vname} | {close:.2f} | {score_str} | {direc} | {reason} |\n"
+        md += "\n---\n\n"
 
         # ── 各品种详细分析 ────────────────────────────────────────────────────
         for r in enriched:

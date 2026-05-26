@@ -50,6 +50,7 @@ dependencies = [
     "torch>=2.6.0",
     "vnpy-sqlite>=1.1.3",
     "openpyxl>=3.1.5",
+    "yagmail>=0.16.0",
 ]
 keywords = ["quant", "quantitative", "investment", "trading", "algotrading"]
 
