@@ -1,144 +1,165 @@
 """
-新闻获取与兼容分析模块（腾讯新闻）
+新闻获取与情绪分析模块（东方财富资讯搜索 API）
 
 说明：
-- 仅使用腾讯新闻 CLI 作为新闻来源。
+- 使用东方财富 finskillshub 资讯搜索 API（需要 EASTMONEY_APIKEY）。
+- API Key 从项目根目录 .env 文件读取（EASTMONEY_APIKEY=mkt_xxx）。
+- 不做多空推断：统一返回中性分数，仅提供真实新闻内容供下游分析。
 - 保留 `NewsSentimentAnalyzer` 兼容接口，避免旧代码导入失败。
-- 不做多空推断：统一返回中性分数，仅提供真实新闻内容。
 """
 
+import json
 import os
-import re
-import shutil
-import subprocess
+import urllib.request
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, List, Optional
 
 
+# ---------------------------------------------------------------------------
+# 工具：读取 .env
+# ---------------------------------------------------------------------------
+
+def _load_env() -> Dict[str, str]:
+    """从项目根目录 .env 加载环境变量（不覆盖已有的系统环境变量）"""
+    env: Dict[str, str] = {}
+    root = Path(__file__).resolve().parent
+    for _ in range(6):
+        candidate = root / ".env"
+        if candidate.exists():
+            with open(candidate, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        env[k.strip()] = v.strip()
+            break
+        root = root.parent
+    return env
+
+
+_ENV = _load_env()
+
+
+def _get_api_key() -> Optional[str]:
+    return os.environ.get("EASTMONEY_APIKEY") or _ENV.get("EASTMONEY_APIKEY")
+
+
+# ---------------------------------------------------------------------------
+# 工具：时间过滤
+# ---------------------------------------------------------------------------
+
+def _filter_by_days(items: List[Dict], days: int) -> List[Dict]:
+    """按发布时间过滤，days=0 表示不过滤"""
+    if days <= 0:
+        return items
+    cutoff = datetime.now() - timedelta(days=days)
+    out: List[Dict] = []
+    for it in items:
+        pt = it.get("publish_time")
+        if not pt:
+            out.append(it)
+            continue
+        try:
+            dt = datetime.strptime(str(pt)[:19], "%Y-%m-%d %H:%M:%S")
+            if dt >= cutoff:
+                out.append(it)
+        except Exception:
+            out.append(it)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 东方财富资讯搜索抓取器
+# ---------------------------------------------------------------------------
+
 class NewsFetcher:
-    """腾讯新闻抓取器（仅腾讯源）"""
+    """
+    东方财富 finskillshub 资讯搜索抓取器。
+
+    接口：POST https://mkapi2.dfcfs.com/finskillshub/api/claw/news-search
+    响应路径：data.data.llmSearchResponse.data[]
+    字段：title / content / date / insName（来源机构）/ informationType
+    """
+
+    _API_URL = "https://mkapi2.dfcfs.com/finskillshub/api/claw/news-search"
 
     def __init__(self, timeout: int = 15):
         self._timeout = timeout
-        self._cli_path = self._find_cli()
+        self._api_key = _get_api_key()
 
-    def _find_cli(self) -> Optional[str]:
-        path = shutil.which("tencent-news-cli")
-        if path:
-            return path
+    def fetch_news(self, keyword: str, days: int = 30, max_results: int = 20) -> List[Dict]:
+        """搜索新闻/研报并返回结构化结果列表"""
+        if not self._api_key:
+            print("⚠️ 未配置 EASTMONEY_APIKEY，无法获取东方财富新闻")
+            return []
 
-        candidates = [
-            "~/.tencent-news-cli/bin/tencent-news-cli",
-            "/usr/local/bin/tencent-news-cli",
-            "/opt/homebrew/bin/tencent-news-cli",
-        ]
-        for p in candidates:
-            full = os.path.expanduser(p)
-            if os.path.isfile(full) and os.access(full, os.X_OK):
-                return full
-        return None
+        payload = json.dumps({"query": keyword}, ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            self._API_URL,
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "apikey": self._api_key,
+            },
+            method="POST",
+        )
 
-    def fetch_news(self, keyword: str, days: int = 7, max_results: int = 20) -> List[Dict]:
-        """搜索新闻并返回结构化结果"""
-        if not self._cli_path:
-            print("⚠️ 腾讯新闻 CLI 未安装")
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                raw = resp.read().decode("utf-8", errors="replace")
+        except Exception as e:
+            print(f"⚠️ 东方财富 API 请求失败: {e}")
             return []
 
         try:
-            result = subprocess.run(
-                [self._cli_path, "search", keyword, "--limit", str(max_results)],
-                capture_output=True,
-                text=True,
-                timeout=self._timeout,
-            )
-            items = self._parse_output(result.stdout + result.stderr)
-            if days > 0:
-                items = self._filter_by_days(items, days)
-            return items
-        except subprocess.TimeoutExpired:
-            print("⚠️ 腾讯新闻查询超时")
-            return []
+            data = json.loads(raw)
+            d1 = data.get("data") or {}
+            d2 = d1.get("data") or {}
+            d3 = d2.get("llmSearchResponse") or {}
+            items_raw = d3.get("data") or []
         except Exception as e:
-            print(f"⚠️ 腾讯新闻查询失败: {e}")
+            print(f"⚠️ 东方财富 API 响应解析失败: {e}")
             return []
 
-    def _parse_output(self, output: str) -> List[Dict]:
         items: List[Dict] = []
-        cur: Dict = {}
+        for it in items_raw[:max_results]:
+            date_str = it.get("date", "")
+            # 统一为 "YYYY-MM-DD HH:MM:SS" 格式
+            publish_time = date_str[:19].replace("T", " ") if date_str else None
 
-        for line in output.split("\n"):
-            line = line.strip()
-            if not line:
-                continue
+            items.append({
+                "title": it.get("title", "").strip(),
+                "content": it.get("content", "").strip()[:300],
+                "publish_time": publish_time,
+                "url": it.get("url", ""),
+                "source": it.get("insName", "东方财富"),
+                "info_type": it.get("informationType", ""),
+            })
 
-            m = re.match(r"^\d+\.\s+标题[：:]\s*(.+)$", line)
-            if m:
-                if cur.get("title"):
-                    items.append(cur)
-                cur = {
-                    "title": m.group(1).strip(),
-                    "content": "",
-                    "publish_time": None,
-                    "url": "",
-                    "source": "腾讯新闻",
-                }
-                continue
-
-            m = re.match(r"^摘要[：:]\s*(.+)$", line)
-            if m and cur:
-                cur["content"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"^来源[：:]\s*(.+)$", line)
-            if m and cur:
-                cur["source"] = m.group(1).strip()
-                continue
-
-            m = re.match(r"^发布时间[：:]\s*(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2})", line)
-            if m and cur:
-                cur["publish_time"] = re.sub(r"[T\s]+", " ", m.group(1).strip())
-                continue
-
-            m = re.match(r"^链接[：:]\s*(https?://\S+)$", line)
-            if m and cur:
-                cur["url"] = m.group(1).strip()
-                continue
-
-        if cur.get("title"):
-            items.append(cur)
+        if days > 0:
+            items = _filter_by_days(items, days)
 
         return items
 
-    def _filter_by_days(self, items: List[Dict], days: int) -> List[Dict]:
-        cutoff = datetime.now() - timedelta(days=days)
-        out: List[Dict] = []
-        for it in items:
-            pt = it.get("publish_time")
-            if not pt:
-                out.append(it)
-                continue
-            try:
-                dt = datetime.strptime(pt[:19], "%Y-%m-%d %H:%M:%S")
-                if dt >= cutoff:
-                    out.append(it)
-            except Exception:
-                out.append(it)
-        return out
 
+# ---------------------------------------------------------------------------
+# NewsSentimentAnalyzer（兼容旧接口）
+# ---------------------------------------------------------------------------
 
 class NewsSentimentAnalyzer:
     """
     兼容旧接口：run.py 仍导入该类。
 
-    注意：按你的要求，不做多空判断，仅返回真实新闻；
-    情绪字段返回中性占位，供下游兼容使用。
+    不做多空判断，仅返回真实新闻内容；情绪字段返回中性占位，供下游使用。
     """
 
     def __init__(self):
         self._fetcher = NewsFetcher()
 
-    def analyze_variety(self, variety: str, variety_name: str, days: int = 7) -> Dict:
-        news = self._fetcher.fetch_news(variety_name, days=days, max_results=20)
+    def analyze_variety(self, variety: str, variety_name: str, days: int = 30) -> Dict:
+        keyword = f"{variety_name}期货"
+        news = self._fetcher.fetch_news(keyword, days=days, max_results=20)
 
         return {
             "variety": variety,
@@ -147,7 +168,7 @@ class NewsSentimentAnalyzer:
             "news_count": len(news),
             "sentiment_score": 0.0,
             "sentiment_label": "中性",
-            "summary": f"腾讯新闻共获取 {len(news)} 条",
+            "summary": f"共获取 {len(news)} 条资讯（东方财富）",
             "key_points": [
                 {
                     "title": n.get("title", ""),
@@ -161,8 +182,8 @@ class NewsSentimentAnalyzer:
 
 if __name__ == "__main__":
     analyzer = NewsSentimentAnalyzer()
-    result = analyzer.analyze_variety("p", "棕榈油", days=7)
+    result = analyzer.analyze_variety("p", "棕榈油", days=30)
     print(f"✅ 新闻数量: {result['news_count']}")
     print(f"✅ 摘要: {result['summary']}")
-    for n in result["news"][:5]:
-        print(f"- [{n.get('source','')}] {n.get('title','')}")
+    for n in result["news"][:10]:
+        print(f"- [{n.get('publish_time', '')[:10]}][{n.get('source', '')}] {n.get('title', '')}")

@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 唯一标识符，建议和文件名一致 -->
+    <key>Label</key>
+    <string>com.vnpy.dce.daily</string>
+
+    <!-- 执行的命令 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/scripts/run_daily.sh</string>
+    </array>
+
+    <!-- 每天 16:00 触发 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>16</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!--
+        关机时错过的任务：开机后立刻补跑
+        注意：launchd 每次错过只补跑一次，不会重复积压
+    -->
+
+    <!-- 标准输出/错误也写到系统日志，方便 Console.app 查看 -->
+    <key>StandardOutPath</key>
+    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/launchd_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/launchd_stderr.log</string>
+
+    <!-- 任务失败自动重试间隔（秒）-->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <!-- 需要网络才能运行 -->
+    <key>NetworkState</key>
+    <true/>
+
+    <!-- 任务运行时的环境变量 -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/lishengkun/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/lishengkun</string>
+    </dict>
+</dict>
+</plist>
