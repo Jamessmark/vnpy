@@ -213,14 +213,18 @@ def daily_update(
                 stats["errors"].append(msg)
 
         # ── 5. 更新主力映射 + 合成 888 合约 ───────────────────
-        for variety in VARIETIES:
-            try:
-                _update_variety_contracts(variety, trade_dates, mapping_store, db)
-                stats["updated_varieties"] += 1
-            except Exception as e:
-                msg = f"品种 {variety} 更新失败: {e}"
-                print(f"  ❌ {msg}")
-                stats["errors"].append(msg)
+        # 只在真正下载到新数据时才重算，避免无新数据时浪费 ~2 分钟
+        if stats["new_contracts"] == 0:
+            print("ℹ️ 无新原始数据，跳过主连重算")
+        else:
+            for variety in VARIETIES:
+                try:
+                    _update_variety_contracts(variety, trade_dates, mapping_store, db)
+                    stats["updated_varieties"] += 1
+                except Exception as e:
+                    msg = f"品种 {variety} 更新失败: {e}"
+                    print(f"  ❌ {msg}")
+                    stats["errors"].append(msg)
 
         stats["status"]   = "success"
         stats["end_time"] = datetime.now()
