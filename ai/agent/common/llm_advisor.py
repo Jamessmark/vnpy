@@ -248,37 +248,59 @@ class LLMAdvisor:
     def _extract_score(llm_response: str) -> float:
         """
         从 LLM 返回文本中提取综合评分（-100 ~ 100）。
-        优先匹配 '综合评分' 后第一个带符号/不带符号的整数或浮点数。
+        只在 '### 综合评分' 段落正文中查找，跳过含「到」的范围说明行。
         找不到则返回 0.0。
         """
         import re
-        # 先找 '综合评分' 段落，再从中取数字
-        block = re.search(r"综合评分[^\n]*\n(.*?)(?=\n###|\Z)", llm_response, re.S)
-        text  = block.group(1) if block else llm_response
-        # 匹配形如 -85 / +50 / 75 的数字
-        m = re.search(r"[：:]\s*([+-]?\d+(?:\.\d+)?)", text)
-        if not m:
-            m = re.search(r"([+-]?\d+(?:\.\d+)?)\s*分", text)
-        if not m:
-            m = re.search(r"([+-]?\d{1,3}(?:\.\d+)?)", text)
-        if m:
-            try:
-                val = float(m.group(1))
-                if -100 <= val <= 100:
-                    return val
-            except ValueError:
-                pass
+        # 定位 '### 综合评分' 段落（到下一个 ### 或文末）
+        block = re.search(
+            r"###\s*综合评分[^\n]*\n(.*?)(?=\n###|\Z)",
+            llm_response, re.S
+        )
+        if not block:
+            return 0.0
+        text = block.group(1)
+
+        for line in text.splitlines():
+            # 跳过范围说明行，如「-100到100」「（-100到100）」
+            if "到" in line and re.search(r"-?\d+到\d+", line):
+                continue
+            # 优先匹配「评分：+72」「: -45」「= 80」
+            m = re.search(r"[：:=]\s*([+-]?\d+(?:\.\d+)?)", line)
+            if not m:
+                # 其次匹配「+72分」「-45分」
+                m = re.search(r"([+-]\d+(?:\.\d+)?)\s*分", line)
+            if not m:
+                # 再次匹配独立数字（不含「到」已过滤）
+                m = re.search(r"\b([+-]?\d{1,3}(?:\.\d+)?)\b", line)
+            if m:
+                try:
+                    val = float(m.group(1))
+                    if -100 <= val <= 100:
+                        return val
+                except ValueError:
+                    pass
         return 0.0
 
     @staticmethod
     def _extract_direction(llm_response: str) -> str:
         """从 LLM 返回中提取操作方向（做多/做空/观望）"""
         import re
-        m = re.search(r"\*{0,2}方向\*{0,2}[：:]\s*([^\n，,]+)", llm_response)
+        # 只从 '### 交易建议' 段落中提取，避免误匹配模板占位符
+        block = re.search(
+            r"###\s*交易建议[^\n]*\n(.*?)(?=\n###|\Z)",
+            llm_response, re.S
+        )
+        text = block.group(1) if block else ""
+        m = re.search(r"\*{0,2}方向\*{0,2}[：:]\s*([^\n，,/／]+)", text)
         if m:
-            return m.group(1).strip()
+            direction = m.group(1).strip()
+            # 排除占位符「做多 / 做空 / 观望」
+            if "/" not in direction and "／" not in direction:
+                return direction
+        # fallback：在交易建议段落里找第一个明确方向词
         for word in ["做多", "做空", "观望"]:
-            if word in llm_response:
+            if word in text:
                 return word
         return "—"
 
