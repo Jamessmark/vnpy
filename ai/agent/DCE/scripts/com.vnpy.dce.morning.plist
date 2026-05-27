@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vnpy.dce.morning</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/scripts/run_morning.sh</string>
+    </array>
+
+    <!-- 每天 08:30 触发 -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>8</integer>
+        <key>Minute</key>
+        <integer>30</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/morning_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/morning_stderr.log</string>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>NetworkState</key>
+    <true/>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/lishengkun/.local/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/lishengkun</string>
+    </dict>
+</dict>
+</plist>
