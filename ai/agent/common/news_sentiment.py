@@ -10,6 +10,7 @@
 
 import json
 import os
+import time
 import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -41,8 +42,14 @@ def _load_env() -> Dict[str, str]:
 _ENV = _load_env()
 
 
-def _get_api_key() -> Optional[str]:
-    return os.environ.get("EASTMONEY_APIKEY") or _ENV.get("EASTMONEY_APIKEY")
+def _get_api_keys() -> list:
+    """返回所有可用的 API Key 列表（优先读 EASTMONEY_APIKEY1/2，兼容旧 EASTMONEY_APIKEY）"""
+    keys = []
+    for k in ("EASTMONEY_APIKEY1", "EASTMONEY_APIKEY2", "EASTMONEY_APIKEY"):
+        v = os.environ.get(k) or _ENV.get(k)
+        if v and v not in keys:
+            keys.append(v)
+    return keys
 
 
 # ---------------------------------------------------------------------------
@@ -85,14 +92,27 @@ class NewsFetcher:
     _API_URL = "https://mkapi2.dfcfs.com/finskillshub/api/claw/news-search"
 
     def __init__(self, timeout: int = 15):
-        self._timeout = timeout
-        self._api_key = _get_api_key()
+        self._timeout  = timeout
+        self._api_keys = _get_api_keys()
+        self._key_idx  = 0  # 轮询指针
 
-    def fetch_news(self, keyword: str, days: int = 30, max_results: int = 20) -> List[Dict]:
-        """搜索新闻/研报并返回结构化结果列表"""
-        if not self._api_key:
+    def _next_key(self) -> Optional[str]:
+        """轮流返回下一个 API Key"""
+        if not self._api_keys:
+            return None
+        key = self._api_keys[self._key_idx % len(self._api_keys)]
+        self._key_idx += 1
+        return key
+
+    def fetch_news(self, keyword: str, days: int = 30, max_results: int = 20, request_interval: float = 0.0) -> List[Dict]:
+        """搜索新闻/研报并返回结构化结果列表（轮询 API Key）"""
+        api_key = self._next_key()
+        if not api_key:
             print("⚠️ 未配置 EASTMONEY_APIKEY，无法获取东方财富新闻")
             return []
+
+        if request_interval > 0:
+            time.sleep(request_interval)
 
         payload = json.dumps({"query": keyword}, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
@@ -100,7 +120,7 @@ class NewsFetcher:
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "apikey": self._api_key,
+                "apikey": api_key,
             },
             method="POST",
         )
