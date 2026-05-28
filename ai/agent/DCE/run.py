@@ -45,7 +45,7 @@ from ai.agent.DCE.data_collector.collector import daily_update
 # ── 通用层 ──────────────────────────────────────────────────────────────────
 from ai.agent.common.factor_analysis import Alpha158Calculator
 from ai.agent.common.news_sentiment import NewsSentimentAnalyzer
-from ai.agent.common.llm_advisor import LLMAdvisor
+from ai.agent.common.deepseek_advisor import DeepSeekAdvisor
 
 # ── DCE 专有 ────────────────────────────────────────────────────────────────
 from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES
@@ -202,10 +202,9 @@ def main(
     print(f"\n✅ 完成 {len(sentiment_results)}/{ok_count} 个品种的情绪分析")
 
     # ── Step 4: 决策生成 ─────────────────────────────────────────────────────
-    print("\n[步骤 4/4] 决策报告生成...")
-    advisor = LLMAdvisor(
+    print("\n[步骤 4/4] 决策报告生成（DeepSeek-V4-Pro）...")
+    advisor = DeepSeekAdvisor(
         exchange_name = "大商所",
-        session_name  = "DCE决策Agent",
         report_dir    = _REPORT_DIR,
     )
 
