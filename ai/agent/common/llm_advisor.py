@@ -16,6 +16,7 @@ LLM 决策顾问框架 — 通用版
 """
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -251,7 +252,6 @@ class LLMAdvisor:
         只在 '### 综合评分' 段落正文中查找，跳过含「到」的范围说明行。
         找不到则返回 0.0。
         """
-        import re
         # 定位 '### 综合评分' 段落（到下一个 ### 或文末）
         block = re.search(
             r"###\s*综合评分[^\n]*\n(.*?)(?=\n###|\Z)",
@@ -285,7 +285,6 @@ class LLMAdvisor:
     @staticmethod
     def _extract_direction(llm_response: str) -> str:
         """从 LLM 返回中提取操作方向（做多/做空/观望）"""
-        import re
         # 只从 '### 交易建议' 段落中提取，避免误匹配模板占位符
         block = re.search(
             r"###\s*交易建议[^\n]*\n(.*?)(?=\n###|\Z)",
@@ -307,7 +306,6 @@ class LLMAdvisor:
     @staticmethod
     def _extract_reason(llm_response: str) -> str:
         """从 LLM 返回中提取一句话理由"""
-        import re
         m = re.search(r"\*{0,2}理由\*{0,2}[：:]\s*([^\n]{1,80})", llm_response)
         if m:
             return m.group(1).strip()
