@@ -50,8 +50,9 @@ from ai.agent.common.deepseek_advisor import DeepSeekAdvisor
 # ── DCE 专有 ────────────────────────────────────────────────────────────────
 from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES
 
-# 报告目录
-_REPORT_DIR = Path(__file__).parent / "reports"
+# 报告根目录（子目录由 --mode 决定）
+_REPORT_ROOT = Path(__file__).parent / "reports"
+_LOG_ROOT    = Path(__file__).parent / "logs"
 
 
 def _send_report_email(report_path: Path, target_date: date) -> None:
@@ -102,6 +103,7 @@ def main(
     target_date: date = None,
     output_file: str = None,
     fetch_data: bool = True,
+    mode: str = "manual",
 ) -> None:
     """
     主运行流程：API 拉取数据 → 主连更新 → Alpha158 因子计算 → 新闻获取 → LLM 决策报告。
@@ -111,6 +113,7 @@ def main(
         target_date:  目标日期；None 则使用数据库最新有数据的日期
         output_file:  汇总报告文件名（不含目录）
         fetch_data:   是否先通过 API 拉取最新数据（默认 True）
+        mode:         运行模式 'manual'/'morning'/'daily'，决定输出子目录和文件名后缀
     """
     print("\n" + "=" * 60)
     print("🚀 DCE 决策系统 - 主流程")
@@ -203,9 +206,17 @@ def main(
 
     # ── Step 4: 决策生成 ─────────────────────────────────────────────────────
     print("\n[步骤 4/4] 决策报告生成（DeepSeek-V4-Pro）...")
+    # 根据 mode 决定报告子目录和文件名后缀
+    _suffix_map = {"morning": "_morning", "daily": "_daily", "manual": ""}
+    _subdir_map = {"morning": "auto", "daily": "auto", "manual": "manual"}
+    report_suffix = _suffix_map.get(mode, "")
+    report_subdir = _subdir_map.get(mode, "manual")
+    report_dir = _REPORT_ROOT / report_subdir
+    report_dir.mkdir(parents=True, exist_ok=True)
+
     advisor = DeepSeekAdvisor(
         exchange_name = "大商所",
-        report_dir    = _REPORT_DIR,
+        report_dir    = report_dir,
     )
 
     reports = []
@@ -233,9 +244,8 @@ def main(
     # 生成汇总报告
     if reports:
         if output_file is None:
-            output_file = f"decision_report_{target_date.isoformat()}.md"
-        _REPORT_DIR.mkdir(parents=True, exist_ok=True)
-        report_path = _REPORT_DIR / output_file
+            output_file = f"decision_report_{target_date.isoformat()}{report_suffix}.md"
+        report_path = report_dir / output_file
         advisor.generate_batch_report(reports, output_file)
         print(f"\n✅ 汇总报告已生成: {report_path}")
 
@@ -273,10 +283,17 @@ if __name__ == "__main__":
         help="跳过 API 数据拉取，直接使用数据库现有数据",
         default=False,
     )
+    parser.add_argument(
+        "--mode",
+        choices=["manual", "morning", "daily"],
+        default="manual",
+        help="运行模式：manual=手动(reports/manual/)，morning=早盘(reports/auto/+_morning后缀)，daily=日报(reports/auto/+_daily后缀)",
+    )
     args = parser.parse_args()
     main(
         varieties   = args.varieties,
         target_date = args.date,
         output_file = args.output,
         fetch_data  = not args.no_fetch,
+        mode        = args.mode,
     )
