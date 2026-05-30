@@ -265,14 +265,17 @@ class LLMAdvisor:
             # 跳过范围说明行，如「-100到100」「（-100到100）」
             if "到" in line and re.search(r"-?\d+到\d+", line):
                 continue
-            # 优先匹配「评分：+72」「: -45」「= 80」
-            m = re.search(r"[：:=]\s*([+-]?\d+(?:\.\d+)?)", line)
+            # 优先匹配加粗格式「**-65**」「**+72**」
+            m = re.search(r"\*\*\s*([+-]?\d+(?:\.\d+)?)\s*\*\*", line)
             if not m:
-                # 其次匹配「+72分」「-45分」
+                # 匹配「评分：+72」「: -45」「= 80」
+                m = re.search(r"[：:=]\s*([+-]?\d+(?:\.\d+)?)", line)
+            if not m:
+                # 匹配「+72分」「-45分」
                 m = re.search(r"([+-]\d+(?:\.\d+)?)\s*分", line)
             if not m:
                 # 再次匹配独立数字（不含「到」已过滤）
-                m = re.search(r"\b([+-]?\d{1,3}(?:\.\d+)?)\b", line)
+                m = re.search(r"(?<![*\d])([+-]?\d{1,3}(?:\.\d+)?)(?![*\d])", line)
             if m:
                 try:
                     val = float(m.group(1))
