@@ -18,6 +18,7 @@ DeepSeek LLM 决策顾问
     advisor.generate_batch_report([report])
 """
 import os
+import re
 from datetime import datetime, date
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -28,6 +29,7 @@ from dotenv import load_dotenv
 # 复用 prompt 模板和报告渲染逻辑
 from ai.agent.common.llm_advisor import (
     _DEFAULT_PROMPT_TEMPLATE,
+    _GROUP_PROMPT_TEMPLATE,
     LLMAdvisor,          # 只继承报告生成 / 评分提取部分，不用 Session
 )
 
@@ -36,7 +38,8 @@ load_dotenv(_ENV_PATH)
 
 _MODEL        = "deepseek-v4-pro"
 _BASE_URL     = "https://api.deepseek.com/v1"
-_MAX_TOKENS   = 2048
+_MAX_TOKENS_SINGLE = 2048   # 单品种分析
+_MAX_TOKENS_PER_VARIETY = 1200  # 分组分析每品种预留 token
 _TEMPERATURE  = 0.3
 
 
@@ -47,12 +50,12 @@ def _build_client() -> OpenAI:
     return OpenAI(api_key=api_key, base_url=_BASE_URL)
 
 
-def _call_deepseek(client: OpenAI, prompt: str) -> str:
+def _call_deepseek(client: OpenAI, prompt: str, max_tokens: int = _MAX_TOKENS_SINGLE) -> str:
     """调用 DeepSeek API，返回文本回复。"""
     resp = client.chat.completions.create(
         model       = _MODEL,
         messages    = [{"role": "user", "content": prompt}],
-        max_tokens  = _MAX_TOKENS,
+        max_tokens  = max_tokens,
         temperature = _TEMPERATURE,
         stream      = False,
     )
@@ -277,3 +280,111 @@ class DeepSeekAdvisor:
             "llm_prompt":   prompt,
             "llm_response": llm_response,
         }
+
+    def generate_group_report(
+        self,
+        group_name:        str,
+        varieties:         List[str],
+        variety_names:     Dict[str, str],
+        alpha_results:     Dict[str, Dict],
+        sentiment_results: Dict[str, Dict],
+        target_date:       Optional[date] = None,
+    ) -> List[Dict]:
+        """
+        对一个产业链分组的多个品种合并调用一次 DeepSeek，
+        从返回文本中拆解出每个品种的报告字典，格式与
+        generate_decision_report() 完全一致。
+
+        Args:
+            group_name:        分组名称，如「豆系」
+            varieties:         本组品种代码列表
+            variety_names:     品种代码→中文名
+            alpha_results:     {variety: alpha_features_dict}
+            sentiment_results: {variety: sentiment_result_dict}
+            target_date:       目标日期
+
+        Returns:
+            List[Dict]，每个元素与 generate_decision_report() 返回格式相同。
+        """
+        # 只处理有 alpha 数据的品种
+        valid = [v for v in varieties if v in alpha_results]
+        if not valid:
+            return []
+
+        if target_date is None:
+            first = next(iter(alpha_results[valid[0]].get("_date", None) for _ in [1]))
+            target_date = first if first else date.today()
+        if not isinstance(target_date, date):
+            target_date = date.today()
+
+        # ── 拼接各品种数据块 ───────────────────────────────────────────────────
+        varieties_data_parts = []
+        for v in valid:
+            vname       = variety_names.get(v, v)
+            alpha_text  = _format_alpha_features(alpha_results[v])
+            sent        = sentiment_results.get(v, {})
+            news_list   = sent.get("news", [])
+            if news_list:
+                news_lines = []
+                for i, n in enumerate(news_list, 1):
+                    title    = n.get("title", "").strip()
+                    source   = n.get("source", "")
+                    pub_time = (n.get("publish_time") or "")[:10]
+                    content  = (n.get("content") or "").strip()[:150]
+                    news_lines.append(
+                        f"{i}. [{pub_time}][{source}] {title}"
+                        + (f"\n   摘要：{content}" if content else "")
+                    )
+                news_text = "\n".join(news_lines)
+            else:
+                news_text = "（未获取到新闻，请仅依据技术指标分析）"
+
+            part = (
+                f"### {vname}（代码: {v}，收盘价: {alpha_results[v].get('_close', 0):.2f}）\n\n"
+                f"**技术数据**\n{alpha_text}\n\n"
+                f"**近期新闻（共 {len(news_list)} 条）**\n{news_text}"
+            )
+            varieties_data_parts.append(part)
+
+        varieties_data      = "\n\n---\n\n".join(varieties_data_parts)
+        variety_names_list  = "、".join(variety_names.get(v, v) for v in valid)
+
+        prompt = _GROUP_PROMPT_TEMPLATE.format(
+            exchange_name       = self.exchange_name,
+            group_name          = group_name,
+            date                = target_date.isoformat(),
+            varieties_data      = varieties_data,
+            variety_names_list  = variety_names_list,
+        )
+
+        print(f"  [DeepSeek] 分析分组 【{group_name}】({variety_names_list})...", end="", flush=True)
+        llm_response = ""
+        max_tokens = _MAX_TOKENS_PER_VARIETY * len(valid)
+        try:
+            llm_response = _call_deepseek(self._client, prompt, max_tokens=max_tokens)
+            print(" ✓")
+        except Exception as e:
+            print(f" ❌ {e}")
+
+        # ── 从 LLM 回复中拆解各品种 ────────────────────────────────────────────
+        results = []
+        for v in valid:
+            vname      = variety_names.get(v, v)
+            # 找 ## 品种名 开头的块
+            block_pat  = rf"##\s*{re.escape(vname)}[\s\S]*?(?=\n##\s+(?!.*### )|\Z)"
+            block_m    = re.search(block_pat, llm_response)
+            variety_llm = block_m.group(0).strip() if block_m else ""
+
+            results.append({
+                "variety":      v,
+                "variety_name": vname,
+                "date":         target_date.isoformat(),
+                "timestamp":    datetime.now().isoformat(),
+                "exchange":     self.exchange_name,
+                "close_price":  alpha_results[v].get("_close", 0),
+                "llm_prompt":   prompt,
+                "llm_response": variety_llm,
+                "_group":       group_name,
+            })
+
+        return results

@@ -48,7 +48,7 @@ from ai.agent.common.news_sentiment import NewsSentimentAnalyzer
 from ai.agent.common.deepseek_advisor import DeepSeekAdvisor
 
 # ── DCE 专有 ────────────────────────────────────────────────────────────────
-from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES
+from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES, VARIETY_GROUPS
 
 # 报告根目录（子目录由 --mode 决定）
 _REPORT_ROOT = Path(__file__).parent / "reports"
@@ -204,8 +204,8 @@ def main(
 
     print(f"\n✅ 完成 {len(sentiment_results)}/{ok_count} 个品种的情绪分析")
 
-    # ── Step 4: 决策生成 ─────────────────────────────────────────────────────
-    print("\n[步骤 4/4] 决策报告生成（DeepSeek-V4-Pro）...")
+    # ── Step 4: 决策生成（按产业链分组调用 LLM）────────────────────────────
+    print("\n[步骤 4/4] 决策报告生成（DeepSeek-V4-Pro，按产业链分组）...")
     # 根据 mode 决定报告子目录和文件名后缀
     _suffix_map = {"morning": "_morning", "daily": "_daily", "manual": ""}
     _subdir_map = {"morning": "auto", "daily": "auto", "manual": "manual"}
@@ -221,23 +221,66 @@ def main(
 
     reports = []
 
-    for variety in alpha_results:
-        if variety not in sentiment_results:
+    # 按 VARIETY_GROUPS 分组处理，未在分组中的品种单独处理
+    grouped_varieties = {v for group in VARIETY_GROUPS.values() for v in group}
+    ungrouped = [v for v in alpha_results if v not in grouped_varieties]
+
+    for group_name, group_varieties in VARIETY_GROUPS.items():
+        # 只取本组中有 alpha 数据且在当前 varieties 里的品种
+        valid = [v for v in group_varieties if v in alpha_results]
+        if not valid:
             continue
-        variety_name = VARIETY_NAMES.get(variety, variety)
+
+        if len(valid) == 1:
+            # 只有1个品种时直接用单品种方式
+            v = valid[0]
+            vname = VARIETY_NAMES.get(v, v)
+            try:
+                report = advisor.generate_decision_report(
+                    v, vname,
+                    alpha_results[v],
+                    sentiment_results.get(v, {}),
+                )
+                reports.append(report)
+                close = report.get("close_price", 0)
+                has_resp = bool(report.get("llm_response"))
+                print(f"  ✅ {vname} 收盘={close:.2f}  LLM={'✓' if has_resp else '✗'}")
+            except Exception as e:
+                print(f"  ❌ {vname} 决策报告失败: {e}")
+        else:
+            try:
+                group_reports = advisor.generate_group_report(
+                    group_name        = group_name,
+                    varieties         = valid,
+                    variety_names     = VARIETY_NAMES,
+                    alpha_results     = alpha_results,
+                    sentiment_results = sentiment_results,
+                    target_date       = target_date,
+                )
+                for r in group_reports:
+                    vname    = r.get("variety_name", "")
+                    close    = r.get("close_price", 0)
+                    has_resp = bool(r.get("llm_response"))
+                    print(f"  ✅ {vname} 收盘={close:.2f}  LLM={'✓' if has_resp else '✗'}")
+                reports.extend(group_reports)
+            except Exception as e:
+                print(f"  ❌ 分组【{group_name}】报告失败: {e}")
+
+    # 未分组的品种单独处理
+    for v in ungrouped:
+        vname = VARIETY_NAMES.get(v, v)
         try:
             report = advisor.generate_decision_report(
-                variety,
-                variety_name,
-                alpha_results[variety],
-                sentiment_results[variety],
+                v, vname,
+                alpha_results[v],
+                sentiment_results.get(v, {}),
             )
             reports.append(report)
             close = report.get("close_price", 0)
             has_resp = bool(report.get("llm_response"))
-            print(f"  ✅ {variety_name} 收盘={close:.2f}  LLM={'✓' if has_resp else '✗'}")
+            print(f"  ✅ {vname}（未分组）收盘={close:.2f}  LLM={'✓' if has_resp else '✗'}")
         except Exception as e:
-            print(f"  ❌ {variety_name} 决策报告失败: {e}")
+            print(f"  ❌ {vname} 决策报告失败: {e}")
 
     print(f"\n✅ 完成 {len(reports)} 个品种的决策报告")
 
