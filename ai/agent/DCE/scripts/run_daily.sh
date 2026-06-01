@@ -16,10 +16,15 @@ LOG_FILE="${LOG_DIR}/daily_$(date +%Y%m%d_%H%M%S).log"
 # ── 运行 ──────────────────────────────────────────────────────────────────
 echo "===== DCE 日报任务启动: $(date '+%Y-%m-%d %H:%M:%S') =====" | tee "${LOG_FILE}"
 
-# 等待网络就绪（最多等 180 秒，兼容 hibernatemode=3 冷启动）
+# 用 caffeinate 阻止任务运行期间系统睡眠，并触发网络接口激活
+caffeinate -i -s -t 3600 &
+CAFFEINATE_PID=$!
+trap "kill ${CAFFEINATE_PID} 2>/dev/null" EXIT
+
+# 等待网络就绪（最多等 180 秒，兼容唤醒后网络延迟）
 echo "等待网络就绪..." | tee -a "${LOG_FILE}"
 for i in $(seq 1 36); do
-    if scutil --nwi 2>/dev/null | grep -q "IPv4 network reachable\|Reachable"; then
+    if scutil --nwi 2>/dev/null | grep -qE "Reachable"; then
         echo "✅ 网络已就绪（第 ${i} 次检测，scutil）" | tee -a "${LOG_FILE}"
         break
     fi

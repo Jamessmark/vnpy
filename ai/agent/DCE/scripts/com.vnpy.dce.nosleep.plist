@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vnpy.dce.nosleep</string>
+
+    <!-- caffeinate -s: 持有 PreventSystemSleep 断言，阻止合盖睡眠（AC电源下有效） -->
+    <!-- caffeinate -i: 持有 PreventUserIdleSystemSleep 断言，阻止空闲睡眠 -->
+    <!-- -t 86400: 每24小时重启一次，避免进程长期驻留出现问题 -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/caffeinate</string>
+        <string>-s</string>
+        <string>-i</string>
+        <string>-t</string>
+        <string>86400</string>
+    </array>
+
+    <!-- 进程退出后自动重启 -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- 系统启动时立即运行 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>
