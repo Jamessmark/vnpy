@@ -48,7 +48,7 @@ from ai.agent.common.news_sentiment import NewsSentimentAnalyzer
 from ai.agent.common.deepseek_advisor import DeepSeekAdvisor
 
 # ── DCE 专有 ────────────────────────────────────────────────────────────────
-from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES, VARIETY_GROUPS
+from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES, VARIETY_GROUPS, VARIETY_EXTRA_KEYWORDS
 
 # 报告根目录（子目录由 --mode 决定）
 _REPORT_ROOT = Path(__file__).parent / "reports"
@@ -196,7 +196,10 @@ def main(
     for variety in alpha_results:
         variety_name = VARIETY_NAMES.get(variety, variety)
         try:
-            result = analyzer.analyze_variety(variety, variety_name, days=30)
+            result = analyzer.analyze_variety(
+                variety, variety_name, days=30,
+                extra_keywords=VARIETY_EXTRA_KEYWORDS.get(variety),
+            )
             sentiment_results[variety] = result
             print(f"  ✅ {variety_name} 新闻={result.get('news_count', 0)} 条")
         except Exception as e:
@@ -333,10 +336,40 @@ if __name__ == "__main__":
         help="运行模式：manual=手动(reports/manual/)，morning=早盘(reports/auto/+_morning后缀)，daily=日报(reports/auto/+_daily后缀)",
     )
     args = parser.parse_args()
-    main(
-        varieties   = args.varieties,
-        target_date = args.date,
-        output_file = args.output,
-        fetch_data  = not args.no_fetch,
-        mode        = args.mode,
-    )
+
+    # ── 日志：同时写入文件 ────────────────────────────────────────────────────
+    _log_subdir = "auto" if args.mode in ("morning", "daily") else "manual"
+    _log_dir = _LOG_ROOT / _log_subdir
+    _log_dir.mkdir(parents=True, exist_ok=True)
+    _mode_tag = f"_{args.mode}" if args.mode != "manual" else ""
+    _log_file = _log_dir / f"{datetime.now().strftime('%Y%m%d_%H%M%S')}{_mode_tag}.log"
+
+    class _Tee:
+        """同时写入 stdout 和 log 文件。"""
+        def __init__(self, *files):
+            self._files = files
+        def write(self, data):
+            for f in self._files:
+                f.write(data)
+                f.flush()
+        def flush(self):
+            for f in self._files:
+                f.flush()
+
+    _log_fh = open(_log_file, "w", encoding="utf-8")
+    sys.stdout = _Tee(sys.__stdout__, _log_fh)  # type: ignore[assignment]
+    sys.stderr = _Tee(sys.__stderr__, _log_fh)  # type: ignore[assignment]
+
+    try:
+        main(
+            varieties   = args.varieties,
+            target_date = args.date,
+            output_file = args.output,
+            fetch_data  = not args.no_fetch,
+            mode        = args.mode,
+        )
+    finally:
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        _log_fh.close()
+        print(f"📄 日志已保存: {_log_file}")

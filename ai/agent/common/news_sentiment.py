@@ -131,6 +131,10 @@ class NewsFetcher:
         except Exception as e:
             print(f"⚠️ 东方财富 API 请求失败: {e}")
             return []
+        finally:
+            # 请求后等待，避免短时间内大量请求触发限流
+            if request_interval > 0:
+                time.sleep(request_interval)
 
         try:
             data = json.loads(raw)
@@ -177,9 +181,29 @@ class NewsSentimentAnalyzer:
     def __init__(self):
         self._fetcher = NewsFetcher()
 
-    def analyze_variety(self, variety: str, variety_name: str, days: int = 30) -> Dict:
-        keyword = f"{variety_name}期货"
-        news = self._fetcher.fetch_news(keyword, days=days, max_results=20)
+    def analyze_variety(
+        self,
+        variety: str,
+        variety_name: str,
+        days: int = 30,
+        extra_keywords: Optional[List[str]] = None,
+    ) -> Dict:
+        # 主关键词 + 最多1个扩展关键词（避免 API 限流，每品种最多2次请求）
+        main_kw = f"{variety_name}期货"
+        extra = (extra_keywords or [])[:1]  # 只取第1个扩展词
+        keywords = [main_kw] + extra
+        seen_titles: set = set()
+        news: List[Dict] = []
+        per_kw = 15 if len(keywords) == 1 else 12  # 单关键词多拉，双关键词各12
+        for kw in keywords:
+            for item in self._fetcher.fetch_news(kw, days=days, max_results=per_kw, request_interval=1.0):
+                title = item.get("title", "")
+                if title and title not in seen_titles:
+                    seen_titles.add(title)
+                    news.append(item)
+        # 按发布时间降序，最多保留 20 条
+        news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
+        news = news[:20]
 
         return {
             "variety": variety,
@@ -188,7 +212,7 @@ class NewsSentimentAnalyzer:
             "news_count": len(news),
             "sentiment_score": 0.0,
             "sentiment_label": "中性",
-            "summary": f"共获取 {len(news)} 条资讯（东方财富）",
+            "summary": f"共获取 {len(news)} 条资讯（东方财富，关键词：{'、'.join(keywords[:3])}{'…' if len(keywords) > 3 else ''}）",
             "key_points": [
                 {
                     "title": n.get("title", ""),
