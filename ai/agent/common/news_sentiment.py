@@ -146,19 +146,38 @@ class NewsFetcher:
             print(f"⚠️ 东方财富 API 响应解析失败: {e}")
             return []
 
-        items: List[Dict] = []
-        for it in items_raw[:max_results]:
-            date_str = it.get("date", "")
-            # 统一为 "YYYY-MM-DD HH:MM:SS" 格式
-            publish_time = date_str[:19].replace("T", " ") if date_str else None
+        # ── 质量过滤 ──────────────────────────────────────────────────────────
+        # 1. 剔除权威等级最低（L1-3：营销/教育类噪声）
+        # 2. 剔除社区用户发帖（communityFlag=True）
+        # 3. 剔除 code 重复（同一篇文章在多个 recallIndex 里重复出现）
+        seen_codes: set = set()
+        filtered_raw: List[Dict] = []
+        for it in items_raw:
+            auth = it.get("authorityLevel", "")
+            community = str(it.get("communityFlag", "False")).lower()
+            code = it.get("code", "")
+            if auth == "L1-3":
+                continue
+            if community == "true":
+                continue
+            if code and code in seen_codes:
+                continue
+            if code:
+                seen_codes.add(code)
+            filtered_raw.append(it)
 
+        items: List[Dict] = []
+        for it in filtered_raw[:max_results]:
+            date_str = it.get("date", "")
+            publish_time = date_str[:19].replace("T", " ") if date_str else None
             items.append({
                 "title": it.get("title", "").strip(),
                 "content": it.get("content", "").strip()[:300],
                 "publish_time": publish_time,
-                "url": it.get("url", ""),
-                "source": it.get("insName", "东方财富"),
+                "url": it.get("jumpUrl", it.get("url", "")),
+                "source": it.get("source", it.get("insName", "东方财富")),
                 "info_type": it.get("informationType", ""),
+                "authority_level": it.get("authorityLevel", ""),
             })
 
         if days > 0:
@@ -181,47 +200,25 @@ class NewsSentimentAnalyzer:
     def __init__(self):
         self._fetcher = NewsFetcher()
 
-    def analyze_variety(
+    def fetch_group_news(
         self,
-        variety: str,
-        variety_name: str,
+        group_name: str,
+        keywords: List[str],
         days: int = 30,
-        extra_keywords: Optional[List[str]] = None,
-    ) -> Dict:
-        # 主关键词 + 最多1个扩展关键词（避免 API 限流，每品种最多2次请求）
-        main_kw = f"{variety_name}期货"
-        extra = (extra_keywords or [])[:1]  # 只取第1个扩展词
-        keywords = [main_kw] + extra
+        max_results: int = 20,
+    ) -> List[Dict]:
+        """按产业链分组获取新闻，直接使用关键词列表查询，合并去重后返回。"""
         seen_titles: set = set()
         news: List[Dict] = []
-        per_kw = 15 if len(keywords) == 1 else 12  # 单关键词多拉，双关键词各12
+        per_kw = max(8, max_results // len(keywords)) if keywords else max_results
         for kw in keywords:
             for item in self._fetcher.fetch_news(kw, days=days, max_results=per_kw, request_interval=1.0):
                 title = item.get("title", "")
                 if title and title not in seen_titles:
                     seen_titles.add(title)
                     news.append(item)
-        # 按发布时间降序，最多保留 20 条
         news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
-        news = news[:20]
-
-        return {
-            "variety": variety,
-            "variety_name": variety_name,
-            "news": news,
-            "news_count": len(news),
-            "sentiment_score": 0.0,
-            "sentiment_label": "中性",
-            "summary": f"共获取 {len(news)} 条资讯（东方财富，关键词：{'、'.join(keywords[:3])}{'…' if len(keywords) > 3 else ''}）",
-            "key_points": [
-                {
-                    "title": n.get("title", ""),
-                    "source": n.get("source", ""),
-                    "tendency": "中性",
-                }
-                for n in news[:5]
-            ],
-        }
+        return news[:max_results]
 
 
 if __name__ == "__main__":

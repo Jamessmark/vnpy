@@ -48,7 +48,7 @@ from ai.agent.common.news_sentiment import NewsSentimentAnalyzer
 from ai.agent.common.deepseek_advisor import DeepSeekAdvisor
 
 # ── DCE 专有 ────────────────────────────────────────────────────────────────
-from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES, VARIETY_GROUPS, VARIETY_EXTRA_KEYWORDS
+from ai.agent.DCE.dce_constants import CORE_VARIETIES, VARIETY_NAMES, VARIETY_GROUPS, GROUP_KEYWORDS
 
 # 报告根目录（子目录由 --mode 决定）
 _REPORT_ROOT = Path(__file__).parent / "reports"
@@ -188,22 +188,48 @@ def main(
         print("❌ 所有品种因子计算均失败，退出")
         return
 
-    # ── Step 3: 新闻获取 ───────────────────────────────────────────────────────
-    print("\n[步骤 3/4] 新闻获取...")
+    # ── Step 3: 新闻获取（按产业链分组，组内品种共享新闻）───────────────────────
+    print("\n[步骤 3/4] 新闻获取（按产业链分组）...")
     analyzer          = NewsSentimentAnalyzer()
     sentiment_results = {}
 
+    # 建立品种 → 分组名的映射
+    variety_to_group = {v: gname for gname, vs in VARIETY_GROUPS.items() for v in vs}
+
+    # 按分组统一获取新闻，组内品种共享
+    group_news_cache: dict = {}  # {分组名: news列表}
+    for group_name, group_varieties in VARIETY_GROUPS.items():
+        valid = [v for v in group_varieties if v in alpha_results]
+        if not valid:
+            continue
+        keywords = GROUP_KEYWORDS.get(group_name, [])
+        if not keywords:
+            continue
+        try:
+            news_per_variety = 10  # 每个品种分配 10 条新闻
+            max_news = min(news_per_variety * len(valid), 50)  # 上限 50 条
+            group_news = analyzer.fetch_group_news(group_name, keywords, days=30, max_results=max_news)
+            group_news_cache[group_name] = group_news
+            print(f"  ✅ [{group_name}] 新闻={len(group_news)} 条（{len(valid)}个品种共享，上限{max_news}条）")
+        except Exception as e:
+            group_news_cache[group_name] = []
+            print(f"  ❌ [{group_name}] 新闻获取失败: {e}")
+
+    # 将分组新闻分配给每个品种
     for variety in alpha_results:
         variety_name = VARIETY_NAMES.get(variety, variety)
-        try:
-            result = analyzer.analyze_variety(
-                variety, variety_name, days=30,
-                extra_keywords=VARIETY_EXTRA_KEYWORDS.get(variety),
-            )
-            sentiment_results[variety] = result
-            print(f"  ✅ {variety_name} 新闻={result.get('news_count', 0)} 条")
-        except Exception as e:
-            print(f"  ❌ {variety_name} 情绪分析失败: {e}")
+        group_name = variety_to_group.get(variety)
+        group_news = group_news_cache.get(group_name, []) if group_name else []
+        sentiment_results[variety] = {
+            "variety": variety,
+            "variety_name": variety_name,
+            "news": group_news,
+            "news_count": len(group_news),
+            "sentiment_score": 0.0,
+            "sentiment_label": "中性",
+            "summary": f"共获取 {len(group_news)} 条资讯（来自分组【{group_name}】）" if group_name else "无新闻",
+            "key_points": [{"title": n.get("title", ""), "source": n.get("source", ""), "tendency": "中性"} for n in group_news[:5]],
+        }
 
     print(f"\n✅ 完成 {len(sentiment_results)}/{ok_count} 个品种的情绪分析")
 

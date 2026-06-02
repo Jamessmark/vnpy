@@ -218,82 +218,16 @@ _GROUP_PROMPT_TEMPLATE = """你是一位专业的商品期货分析师。以下�
 # ─────────────────────────────────────────────────────────────────────────────
 
 class LLMAdvisor:
-    """LLM 决策顾问（通用版）"""
+    """LLM 决策顾问（通用版）— 提供静态方法和批量报告生成，供 DeepSeekAdvisor 复用"""
 
     def __init__(
         self,
         exchange_name: str = "商品期货",
-        session_name: Optional[str] = None,
         report_dir: Optional[Path] = None,
-        prompt_template: Optional[str] = None,
     ):
-        self.exchange_name   = exchange_name
-        self.prompt_template = prompt_template or _DEFAULT_PROMPT_TEMPLATE
-        self.report_dir      = report_dir or (Path(__file__).parent.parent / "reports")
+        self.exchange_name = exchange_name
+        self.report_dir    = report_dir or (Path(__file__).parent.parent / "reports")
         self.report_dir.mkdir(parents=True, exist_ok=True)
-        _name = session_name or f"{exchange_name}决策Agent"
-        self.session_id = _get_or_create_session(_name)
-
-    def generate_decision_report(
-        self,
-        variety: str,
-        variety_name: str,
-        alpha_features: Dict,
-        sentiment_result: Dict,
-        target_date: Optional[date] = None,
-    ) -> Dict:
-        """生成单品种决策报告，返回包含 LLM 完整输出和输入 Prompt 的字典"""
-        if target_date is None:
-            target_date = alpha_features.get("_date", date.today())
-
-        alpha_text = "\n".join(
-            f"- {k}: {v}"
-            for k, v in alpha_features.items()
-            if not k.startswith("_")
-        ) or "无"
-
-        news_list = sentiment_result.get("news", [])
-        if news_list:
-            news_lines = []
-            for i, n in enumerate(news_list, 1):
-                title    = n.get("title", "").strip()
-                source   = n.get("source", "")
-                pub_time = (n.get("publish_time") or "")[:10]
-                content  = (n.get("content") or "").strip()[:200]
-                news_lines.append(
-                    f"{i}. [{pub_time}][{source}] {title}"
-                    + (f"\n   摘要：{content}" if content else "")
-                )
-            news_text = "\n".join(news_lines)
-        else:
-            news_text = "（未获取到新闻，请仅依据技术指标分析）"
-
-        prompt = self.prompt_template.format(
-            exchange_name       = self.exchange_name,
-            variety             = variety,
-            variety_name        = variety_name,
-            date                = target_date.isoformat(),
-            alpha_features_text = alpha_text,
-            news_count          = len(news_list),
-            news_text           = news_text,
-        )
-
-        llm_response = ""
-        try:
-            llm_response = _send_task_and_wait(self.session_id, prompt, timeout=120)
-        except Exception as e:
-            print(f"  ⚠️ Agent 调用失败：{e}")
-
-        return {
-            "variety":          variety,
-            "variety_name":     variety_name,
-            "date":             target_date.isoformat(),
-            "timestamp":        datetime.now().isoformat(),
-            "exchange":         self.exchange_name,
-            "close_price":      alpha_features.get("_close", 0),
-            "llm_prompt":       prompt,
-            "llm_response":     llm_response,
-        }
 
     @staticmethod
     def _extract_score(llm_response: str) -> float:
