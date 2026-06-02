@@ -19,6 +19,10 @@ DCE 大商所主要品种：豆一、豆二、玉米、玉米淀粉、豆粕、�
     uv run python ai/agent/DCE/run.py --varieties a m y
     uv run python ai/agent/DCE/run.py --varieties p m y --date 2026-05-26
 
+    # 按产业链分组运行（组名：豆系 玉米系 油脂 农产品 化工塑料 煤焦钢）
+    uv run python ai/agent/DCE/run.py --group 煤焦钢
+    uv run python ai/agent/DCE/run.py --group 化工塑料 豆系
+
     # 跳过数据更新（仅用已有数据生成报告）
     uv run python ai/agent/DCE/run.py --no-fetch
 
@@ -335,7 +339,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--varieties",
         nargs="+",
-        help="指定品种列表（如: a m y）",
+        help="指定品种代码列表（如: a m y）",
+        default=None,
+    )
+    parser.add_argument(
+        "--group",
+        nargs="+",
+        metavar="GROUP",
+        help="按产业链分组名运行（如: 煤焦钢 豆系），可用组名: " + " / ".join(VARIETY_GROUPS.keys()),
         default=None,
     )
     parser.add_argument(
@@ -362,6 +373,18 @@ if __name__ == "__main__":
         help="运行模式：manual=手动(reports/manual/)，morning=早盘(reports/auto/+_morning后缀)，daily=日报(reports/auto/+_daily后缀)",
     )
     args = parser.parse_args()
+
+    # --group 转换为品种列表，与 --varieties 合并
+    if args.group:
+        group_varieties: list = []
+        for gname in args.group:
+            if gname not in VARIETY_GROUPS:
+                parser.error(f"未知分组名 '{gname}'，可用: {', '.join(VARIETY_GROUPS.keys())}")
+            group_varieties.extend(VARIETY_GROUPS[gname])
+        # 合并去重（保持顺序）
+        extra = args.varieties or []
+        merged = list(dict.fromkeys(group_varieties + extra))
+        args.varieties = merged
 
     # ── 日志：同时写入文件 ────────────────────────────────────────────────────
     _log_subdir = "auto" if args.mode in ("morning", "daily") else "manual"
@@ -394,6 +417,7 @@ if __name__ == "__main__":
             fetch_data  = not args.no_fetch,
             mode        = args.mode,
         )
+
     finally:
         sys.stdout = sys.__stdout__
         sys.stderr = sys.__stderr__
