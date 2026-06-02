@@ -419,7 +419,9 @@ class LLMAdvisor:
             close = r.get("close_price", 0)
             score = r["_score"]
             score_str = f"{score:+.0f}" if score != 0 else "0"
-            md += f"## {vname}（收盘价: {close:.2f} | 综合评分: {score_str}）\n\n"
+
+            # 详细内容默认折叠，标题作为 summary
+            md += f"<details>\n<summary>\n\n## {vname}（收盘价: {close:.2f} | 综合评分: {score_str}）\n\n</summary>\n\n"
 
             llm_resp = r.get("llm_response", "")
             if llm_resp:
@@ -432,7 +434,7 @@ class LLMAdvisor:
                 md += f"<details>\n<summary>📤 发送至 LLM 的完整输入 ({vname})</summary>\n\n"
                 md += f"```\n{llm_prompt}\n```\n\n</details>\n\n"
 
-            md += "---\n\n"
+            md += "</details>\n\n---\n\n"
 
         if output_file is None:
             output_file = f"decision_report_{report_date}.md"
