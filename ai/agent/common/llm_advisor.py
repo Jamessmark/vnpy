@@ -171,7 +171,11 @@ _GROUP_PROMPT_TEMPLATE = """你是一位专业的商品期货分析师。以下�
 ## 分组名称
 {group_name}（{exchange_name}）
 
-## 各品种数据
+## 分组共享资讯（共 {news_count} 条，组内所有品种参考）
+
+{group_news_text}
+
+## 各品种技术数据
 
 {varieties_data}
 
@@ -249,8 +253,8 @@ class LLMAdvisor:
             # 跳过范围说明行，如「-100到100」「（-100到100）」
             if "到" in line and re.search(r"-?\d+到\d+", line):
                 continue
-            # 优先匹配加粗格式「**-65**」「**+72**」
-            m = re.search(r"\*\*\s*([+-]?\d+(?:\.\d+)?)\s*\*\*", line)
+            # 优先匹配加粗格式「**-65**」「**+72**」「**65/100**」
+            m = re.search(r"\*\*\s*([+-]?\d+(?:\.\d+)?)(?:/\d+)?\s*\*\*", line)
             if not m:
                 # 匹配「评分：+72」「: -45」「= 80」
                 m = re.search(r"[：:=]\s*([+-]?\d+(?:\.\d+)?)", line)
@@ -344,7 +348,9 @@ class LLMAdvisor:
             direc  = r["_direction"]
             reason = r["_reason"] or "—"
             score_str = f"{score:+.0f}" if score != 0 else "0"
-            md += f"| {vname} | {close:.2f} | {score_str} | {direc} | {reason} |\n"
+            # 生成锚点：GitHub/VSCode Markdown 锚点规则：小写、空格转-、去掉特殊字符
+            anchor = vname.lower().replace(" ", "-")
+            md += f"| [{vname}](#{anchor}) | {close:.2f} | {score_str} | {direc} | {reason} |\n"
         md += "\n---\n\n"
 
         # ── 各品种详细分析 ────────────────────────────────────────────────────
@@ -354,8 +360,7 @@ class LLMAdvisor:
             score = r["_score"]
             score_str = f"{score:+.0f}" if score != 0 else "0"
 
-            # 详细内容默认折叠，标题作为 summary
-            md += f"<details>\n<summary>\n\n## {vname}（收盘价: {close:.2f} | 综合评分: {score_str}）\n\n</summary>\n\n"
+            md += f"## {vname}（收盘价: {close:.2f} | 综合评分: {score_str}）\n\n"
 
             llm_resp = r.get("llm_response", "")
             if llm_resp:
@@ -368,7 +373,7 @@ class LLMAdvisor:
                 md += f"<details>\n<summary>📤 发送至 LLM 的完整输入 ({vname})</summary>\n\n"
                 md += f"```\n{llm_prompt}\n```\n\n</details>\n\n"
 
-            md += "</details>\n\n---\n\n"
+            md += "---\n\n"
 
         if output_file is None:
             output_file = f"decision_report_{report_date}.md"

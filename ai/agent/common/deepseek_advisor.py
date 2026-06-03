@@ -317,32 +317,32 @@ class DeepSeekAdvisor:
         if not isinstance(target_date, date):
             target_date = date.today()
 
-        # ── 拼接各品种数据块 ───────────────────────────────────────────────────
+        # ── 提取分组共享新闻（组内所有品种的新闻相同，只需取一次）────────────
+        first_sent = sentiment_results.get(valid[0], {})
+        group_news_list = first_sent.get("news", [])
+        if group_news_list:
+            group_news_lines = []
+            for i, n in enumerate(group_news_list, 1):
+                title    = n.get("title", "").strip()
+                source   = n.get("source", "")
+                pub_time = (n.get("publish_time") or "")[:10]
+                content  = (n.get("content") or "").strip()[:150]
+                group_news_lines.append(
+                    f"{i}. [{pub_time}][{source}] {title}"
+                    + (f"\n   摘要：{content}" if content else "")
+                )
+            group_news_text = "\n".join(group_news_lines)
+        else:
+            group_news_text = "（未获取到新闻，请仅依据技术指标分析）"
+
+        # ── 拼接各品种数据块（仅技术数据，新闻已在分组层统一提供）──────────
         varieties_data_parts = []
         for v in valid:
-            vname       = variety_names.get(v, v)
-            alpha_text  = _format_alpha_features(alpha_results[v])
-            sent        = sentiment_results.get(v, {})
-            news_list   = sent.get("news", [])
-            if news_list:
-                news_lines = []
-                for i, n in enumerate(news_list, 1):
-                    title    = n.get("title", "").strip()
-                    source   = n.get("source", "")
-                    pub_time = (n.get("publish_time") or "")[:10]
-                    content  = (n.get("content") or "").strip()[:150]
-                    news_lines.append(
-                        f"{i}. [{pub_time}][{source}] {title}"
-                        + (f"\n   摘要：{content}" if content else "")
-                    )
-                news_text = "\n".join(news_lines)
-            else:
-                news_text = "（未获取到新闻，请仅依据技术指标分析）"
-
+            vname      = variety_names.get(v, v)
+            alpha_text = _format_alpha_features(alpha_results[v])
             part = (
                 f"### {vname}（代码: {v}，收盘价: {alpha_results[v].get('_close', 0):.2f}）\n\n"
-                f"**技术数据**\n{alpha_text}\n\n"
-                f"**近期新闻（共 {len(news_list)} 条）**\n{news_text}"
+                f"**技术数据**\n{alpha_text}"
             )
             varieties_data_parts.append(part)
 
@@ -353,6 +353,8 @@ class DeepSeekAdvisor:
             exchange_name       = self.exchange_name,
             group_name          = group_name,
             date                = target_date.isoformat(),
+            news_count          = len(group_news_list),
+            group_news_text     = group_news_text,
             varieties_data      = varieties_data,
             variety_names_list  = variety_names_list,
         )
