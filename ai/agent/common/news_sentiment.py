@@ -204,19 +204,35 @@ class NewsSentimentAnalyzer:
         self,
         group_name: str,
         keywords: List[str],
-        days: int = 30,
-        max_results: int = 20,
+        days: int = 180,
+        per_keyword: int = 3,
+        max_results: int = 50,
     ) -> List[Dict]:
-        """按产业链分组获取新闻，直接使用关键词列表查询，合并去重后返回。"""
+        """按产业链分组获取新闻。
+
+        每个关键词独立拉取 per_keyword 条（最多 days 天内），
+        不同关键词之间按标题去重，最终按时间倒序返回，上限 max_results 条。
+
+        Args:
+            group_name:   分组名称（仅用于日志）
+            keywords:     关键词列表
+            days:         时间窗口（天），默认 180 天（半年）
+            per_keyword:  每个关键词保留的新闻条数，默认 3 条
+            max_results:  最终合并后的上限条数，默认 50 条
+        """
         seen_titles: set = set()
         news: List[Dict] = []
-        per_kw = max(8, max_results // len(keywords)) if keywords else max_results
         for kw in keywords:
-            for item in self._fetcher.fetch_news(kw, days=days, max_results=per_kw, request_interval=1.0):
+            kw_news: List[Dict] = []
+            for item in self._fetcher.fetch_news(kw, days=days, max_results=per_keyword * 3, request_interval=1.0):
                 title = item.get("title", "")
-                if title and title not in seen_titles:
-                    seen_titles.add(title)
-                    news.append(item)
+                if not title or title in seen_titles:
+                    continue
+                seen_titles.add(title)
+                kw_news.append(item)
+                if len(kw_news) >= per_keyword:
+                    break
+            news.extend(kw_news)
         news.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
         return news[:max_results]
 

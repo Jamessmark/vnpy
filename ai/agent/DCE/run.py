@@ -210,11 +210,9 @@ def main(
         if not keywords:
             continue
         try:
-            news_per_variety = 10  # 每个品种分配 10 条新闻
-            max_news = min(news_per_variety * len(valid), 50)  # 上限 50 条
-            group_news = analyzer.fetch_group_news(group_name, keywords, days=30, max_results=max_news)
+            group_news = analyzer.fetch_group_news(group_name, keywords)  # days=180, per_keyword=3
             group_news_cache[group_name] = group_news
-            print(f"  ✅ [{group_name}] 新闻={len(group_news)} 条（{len(valid)}个品种共享，上限{max_news}条）")
+            print(f"  ✅ [{group_name}] 新闻={len(group_news)} 条（{len(valid)}个品种共享，每关键词3条/半年窗口）")
         except Exception as e:
             group_news_cache[group_name] = []
             print(f"  ❌ [{group_name}] 新闻获取失败: {e}")
