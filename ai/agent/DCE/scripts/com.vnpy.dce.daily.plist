@@ -14,11 +14,11 @@
         <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/scripts/run_daily.sh</string>
     </array>
 
-    <!-- 每天 16:00 触发 -->
+    <!-- 每天 18:00 触发 -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>16</integer>
+        <integer>18</integer>
         <key>Minute</key>
         <integer>0</integer>
     </dict>
