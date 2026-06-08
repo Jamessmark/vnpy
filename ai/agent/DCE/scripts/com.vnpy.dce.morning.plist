@@ -21,13 +21,14 @@
         <integer>30</integer>
     </dict>
 
-    <key>StandardOutPath</key>
-    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/morning_stdout.log</string>
-    <key>StandardErrorPath</key>
-    <string>/Users/lishengkun/MyDocuments/Duke/stock/vnpy/ai/agent/DCE/logs/morning_stderr.log</string>
+    <!-- 运行日志由 run_morning.sh 写入 logs/auto/morning_YYYYMMDD_HHMMSS.log，此处不再重复 -->
 
     <key>ThrottleInterval</key>
     <integer>60</integer>
+
+    <!-- 任务运行超过 7200 秒（2小时）后强制 kill，防止卡死阻塞下次触发 -->
+    <key>TimeoutStopInterval</key>
+    <integer>7200</integer>
 
     <key>NetworkState</key>
     <true/>

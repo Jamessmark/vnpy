@@ -43,15 +43,19 @@ _MAX_TOKENS_PER_VARIETY = 1200  # 分组分析每品种预留 token
 _TEMPERATURE  = 0.3
 
 
+_API_TIMEOUT  = 300   # 单次 API 调用超时（秒），防止无限等待
+_MAX_RETRIES  = 2     # 超时后最多重试次数
+
+
 def _build_client() -> OpenAI:
     api_key = os.getenv("DEEPSEEK_APIKEY", "").strip()
     if not api_key:
         raise RuntimeError(".env 中未配置 DEEPSEEK_APIKEY")
-    return OpenAI(api_key=api_key, base_url=_BASE_URL)
+    return OpenAI(api_key=api_key, base_url=_BASE_URL, timeout=_API_TIMEOUT, max_retries=_MAX_RETRIES)
 
 
 def _call_deepseek(client: OpenAI, prompt: str, max_tokens: int = _MAX_TOKENS_SINGLE) -> str:
-    """调用 DeepSeek API，返回文本回复。"""
+    """调用 DeepSeek API，返回文本回复。超时或失败时抛出异常。"""
     resp = client.chat.completions.create(
         model       = _MODEL,
         messages    = [{"role": "user", "content": prompt}],
