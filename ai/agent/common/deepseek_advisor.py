@@ -271,6 +271,7 @@ class DeepSeekAdvisor:
         try:
             llm_response = _call_deepseek(self._client, prompt)
             print(" ✓")
+            print(f"  [LLM 返回] {variety_name}:\n{llm_response}\n")
         except Exception as e:
             print(f" ❌ {e}")
 
@@ -369,17 +370,28 @@ class DeepSeekAdvisor:
         try:
             llm_response = _call_deepseek(self._client, prompt, max_tokens=max_tokens)
             print(" ✓")
+            print(f"  [LLM 返回] 【{group_name}】:\n{llm_response}\n")
         except Exception as e:
             print(f" ❌ {e}")
 
         # ── 从 LLM 回复中拆解各品种 ────────────────────────────────────────────
+        # 按 "\n## " 将整个回复切成品种块，再按品种名匹配
+        raw_blocks = re.split(r"\n(?=## )", "\n" + llm_response)
+        block_map: dict = {}
+        for blk in raw_blocks:
+            m = re.match(r"##\s*(.+?)[\s（(【]", blk)
+            if m:
+                block_map[m.group(1).strip()] = blk.strip()
+
         results = []
         for v in valid:
             vname      = variety_names.get(v, v)
-            # 找 ## 品种名 开头的块
-            block_pat  = rf"##\s*{re.escape(vname)}[\s\S]*?(?=\n##\s+(?!.*### )|\Z)"
-            block_m    = re.search(block_pat, llm_response)
-            variety_llm = block_m.group(0).strip() if block_m else ""
+            variety_llm = block_map.get(vname, "")
+            # 如果精确匹配失败，退回到原始正则（兼容 LLM 格式略有变化的情况）
+            if not variety_llm:
+                block_pat = rf"##\s*{re.escape(vname)}.*?(?=\n##\s|\Z)"
+                block_m   = re.search(block_pat, llm_response, re.S)
+                variety_llm = block_m.group(0).strip() if block_m else ""
 
             results.append({
                 "variety":      v,
