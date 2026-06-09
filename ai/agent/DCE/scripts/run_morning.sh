@@ -19,17 +19,12 @@ caffeinate -i -s -t 3600 &
 CAFFEINATE_PID=$!
 trap "kill ${CAFFEINATE_PID} 2>/dev/null" EXIT
 
-# 等待网络就绪（最多等 180 秒，兼容唤醒后网络延迟）
+# 等待网络就绪（最多等 180 秒，验证 DNS 可用，兼容唤醒后网络延迟）
 echo "等待网络就绪..." | tee -a "${LOG_FILE}"
 for i in $(seq 1 36); do
-    # 优先用 scutil 检测系统网络状态（比 ping 更早感知到网络就绪）
-    if scutil --nwi 2>/dev/null | grep -qE "Reachable"; then
-        echo "✅ 网络已就绪（第 ${i} 次检测，scutil）" | tee -a "${LOG_FILE}"
-        break
-    fi
-    # 备用：直接 ping 阿里 DNS
-    if ping -c 1 -t 2 223.5.5.5 &>/dev/null; then
-        echo "✅ 网络已就绪（第 ${i} 次检测，ping）" | tee -a "${LOG_FILE}"
+    # 直接测试 DNS 解析 + HTTP 可达，比 scutil/ping 更严格
+    if curl -sf --max-time 4 --dns-timeout 3 https://www.baidu.com -o /dev/null 2>/dev/null; then
+        echo "✅ 网络已就绪（第 ${i} 次检测，DNS+HTTP）" | tee -a "${LOG_FILE}"
         break
     fi
     echo "  第 ${i} 次等待网络（5s）..." | tee -a "${LOG_FILE}"

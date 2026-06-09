@@ -58,9 +58,12 @@ def get_latest_dce_date_in_db(db) -> Optional[date]:
     return latest.date() if latest else None
 
 
-def load_contracts_from_db(variety: str, trade_date: date, db) -> Dict[str, Dict]:
+def load_contracts_from_db(variety: str, trade_date: date, db, cached_overviews=None) -> Dict[str, Dict]:
     """
     从数据库加载某品种当日所有合约数据（排除 888 加权合约）。
+
+    Args:
+        cached_overviews: 预先加载的 overview 列表；None 时自动查询（性能较慢）
 
     Returns:
         {symbol: {symbol, datetime, open, high, low, close, volume, turnover, open_interest}}
@@ -68,7 +71,7 @@ def load_contracts_from_db(variety: str, trade_date: date, db) -> Dict[str, Dict
     start_dt = datetime.combine(trade_date, time(0, 0))
     end_dt   = datetime.combine(trade_date, time(23, 59))
 
-    overviews  = db.get_bar_overview()
+    overviews  = cached_overviews if cached_overviews is not None else db.get_bar_overview()
     contracts  = [
         o.symbol for o in overviews
         if o.interval == Interval.DAILY
@@ -217,13 +220,17 @@ def daily_update(
         if stats["new_contracts"] == 0:
             print("ℹ️ 无新原始数据，跳过主连重算")
         else:
-            for variety in VARIETIES:
+            print(f"\n🔄 更新主力映射 + 合成888合约（{len(VARIETIES)} 个品种 × {len(trade_dates)} 个交易日）...")
+            # 预先 load 一次 overview，避免每次 load_contracts_from_db 都全量扫描
+            cached_overviews = db.get_bar_overview()
+            for i, variety in enumerate(VARIETIES, 1):
                 try:
-                    _update_variety_contracts(variety, trade_dates, mapping_store, db)
+                    _update_variety_contracts(variety, trade_dates, mapping_store, db, cached_overviews)
                     stats["updated_varieties"] += 1
+                    print(f"  [{i}/{len(VARIETIES)}] ✅ {variety}888 主连更新完成")
                 except Exception as e:
                     msg = f"品种 {variety} 更新失败: {e}"
-                    print(f"  ❌ {msg}")
+                    print(f"  [{i}/{len(VARIETIES)}] ❌ {msg}")
                     stats["errors"].append(msg)
 
         stats["status"]   = "success"
@@ -248,13 +255,15 @@ def _update_variety_contracts(
     dates: List[str],
     mapping_store: MappingStore,
     db,
+    cached_overviews=None,
 ) -> None:
     """
     逐日更新某品种的主力映射表并合成 888 加权合约。
+    cached_overviews: 预先加载的 bar overview 列表，避免每次重复全量查询
     """
     for date_str in dates:
         trade_date    = parse_date(date_str)
-        all_contracts = load_contracts_from_db(variety, trade_date, db)
+        all_contracts = load_contracts_from_db(variety, trade_date, db, cached_overviews)
 
         if not all_contracts:
             continue
